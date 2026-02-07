@@ -2,7 +2,7 @@
 
 ## Introduction
 
-In [02-streams-and-node-design.md](02-streams-and-node-design.md), we learned about Node.js streams and why they maintain constant memory. Now let's walk through the **actual implementation** of this project's streaming architecture.
+In [02-streams-and-node-design.md](02-streams-and-node-design.md), we learned about Node.js streams and why they maintain constant memory. Now let's walk through the **actual implementation** of our streaming architecture.
 
 ## The Complete Pipeline
 
@@ -89,7 +89,7 @@ report-2026-02-07-143022.xlsx
 
 ## Code Walkthrough: Streaming Export
 
-Let's dissect the core implementation from [api/src/controllers/exportController.js](../../api/src/controllers/exportController.js).
+Let's dissect the core implementation of our streaming export.
 
 ### Phase 1: Initialization
 

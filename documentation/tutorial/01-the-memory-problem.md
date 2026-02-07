@@ -2,7 +2,7 @@
 
 ## Introduction
 
-We've been building Node.js applications for a couple of years now. We understand async/await, Express middleware, and database connections. But there's a pattern that keeps causing production incidents: **memory exhaustion during large Excel exports**.
+We've been building Node.js applications for a couple of years now. We understand async/await, Express middleware, and database connections. But there's a pattern that keeps causing production incidents for us: **memory exhaustion during large Excel exports**.
 
 This tutorial series explains why traditional approaches to Excel generation fail at scale, and how streaming architecture solves the problem permanently.
 
@@ -78,10 +78,10 @@ function downloadExcel() {
 - Mobile browsers have even tighter constraints
 - User's network bandwidth limits JSON transfer speed
 
-### Anti-Pattern #2: DataTables Export Plugin (Common in Your Stack!)
+### Anti-Pattern #2: DataTables Export Plugin (Common in Our Stack!)
 
 **The Setup:**
-You use DataTables with the Buttons extension to add "Export to Excel" functionality - a pattern you're likely familiar with.
+We use DataTables with the Buttons extension to add "Export to Excel" functionality - a pattern we're familiar with.
 
 ```javascript
 // In your ETA template with jQuery DataTables
@@ -227,21 +227,21 @@ If your Node.js process has a 4 GB heap limit (common default), **the server cra
 
 ## The Production Incident Pattern
 
-Here's how this typically plays out:
+Here's how this typically plays out for us:
 
-1. **Development**: Test with 100-1,000 rows → works perfectly
-2. **Staging**: Test with 10,000 rows → slow, but completes
-3. **Production Launch**: Users export 50,000-100,000 rows → works, but server memory usage spikes
+1. **Development**: We test with 100-1,000 rows → works perfectly
+2. **Staging**: We test with 10,000 rows → slow, but completes
+3. **Production Launch**: Our users export 50,000-100,000 rows → works, but server memory usage spikes
 4. **The Incident**: Multiple users request large exports simultaneously → **OutOfMemoryError**, server crashes
 5. **The Fix Attempts**:
    - Increase server memory (temporary relief)
-   - Add row limits (users complain)
+   - Add row limits (our users complain)
    - Add queuing (complexity increases)
    - Pagination (defeats purpose of "export all")
 
 ## Why "Just Add More Memory" Doesn't Work
 
-**Scenario:** You have 100,000 records to export
+**Scenario:** We have 100,000 records to export
 
 | Server RAM | Max Concurrent Users | Cost Per Month | When It Fails |
 |------------|---------------------|----------------|---------------|
@@ -250,7 +250,7 @@ Here's how this typically plays out:
 | 16 GB      | 8-12 users          | $160           | Year-end reports |
 | 32 GB      | 16-24 users         | $320           | Audit season |
 
-**The Problem:** You're solving the wrong problem. Memory is **not** the constraint. The architecture is.
+**The Problem:** We're solving the wrong problem. Memory is **not** the constraint. The architecture is.
 
 ## The Fundamental Issue: Data Must Flow, Not Accumulate
 

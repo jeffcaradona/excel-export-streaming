@@ -2,7 +2,7 @@
 
 ## Introduction
 
-In [01-the-memory-problem.md](01-the-memory-problem.md), we saw how traditional approaches cause memory to grow linearly with dataset size: $O(n)$. This tutorial explains how Node.js streams solve this problem by maintaining **constant memory usage** regardless of data volume: $O(1)$.
+In [01-the-memory-problem.md](01-the-memory-problem.md), we saw how traditional approaches cause memory to grow linearly with dataset size: $O(n)$. This tutorial explains how we can use Node.js streams to solve this problem by maintaining **constant memory usage** regardless of data volume: $O(1)$.
 
 ## What Are Streams?
 
@@ -116,7 +116,7 @@ inputStream
 
 ## Streams in Our Excel Export
 
-Our streaming export uses **three** streams connected together:
+Our streaming export uses **three** streams connected together in our architecture:
 
 ```
 ┌──────────────┐      ┌─────────────────┐      ┌─────────────────┐
@@ -361,7 +361,7 @@ Browser sees chunks arriving and writes them to disk immediately. File appears i
 
 ## Real-World Memory Measurements
 
-From our actual [stress tests](../../STRESS-TEST.md) and [api README](../../api/README.md):
+From our actual stress tests and documentation:
 
 ### Streaming Export ([api/src/controllers/exportController.js](../../api/src/controllers/exportController.js))
 

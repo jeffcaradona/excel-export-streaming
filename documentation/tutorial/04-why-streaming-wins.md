@@ -2,9 +2,9 @@
 
 ## Introduction
 
-We've covered the theory ([01-the-memory-problem.md](01-the-memory-problem.md)), the fundamentals ([02-streams-and-node-design.md](02-streams-and-node-design.md)), and the implementation ([03-architecture-dissected.md](03-architecture-dissected.md)). Now let's look at **real performance data** from stress tests and production workloads.
+We've covered the theory ([01-the-memory-problem.md](01-the-memory-problem.md)), the fundamentals ([02-streams-and-node-design.md](02-streams-and-node-design.md)), and the implementation ([03-architecture-dissected.md](03-architecture-dissected.md)). Now let's look at **real performance data** from our stress tests and production workloads.
 
-This tutorial proves streaming isn't just "nice to have" - it's the **only viable solution** for large exports.
+This tutorial proves streaming isn't just "nice to have" - it's the **only viable solution** for our large exports.
 
 ## The Head-to-Head Comparison
 
@@ -404,7 +404,7 @@ Status:      ❌ Crash (OutOfMemoryError after 2 minutes)
 
 ## Cost Analysis: Cloud Hosting
 
-### Scenario: 100 concurrent users, peak export size 100k rows
+### Our Scenario: 100 concurrent users, peak export size 100k rows
 
 **Buffered Approach:**
 
@@ -446,16 +446,16 @@ Bottleneck becomes database connections (50 max), not memory. Database can scale
 - Row count **always** < 5,000
 - Single concurrent user guaranteed
 - Development/testing environments
-- You need to manipulate entire dataset before sending (rare)
+- We need to manipulate entire dataset before sending (rare)
 
 ### When Streaming Is Required
 
 - Row count **ever** > 10,000
 - Multiple concurrent users
-- Production environments
+- Our production environments
 - Data exists in database, doesn't need transformation
-- User might cancel mid-export
-- Memory/cost efficiency matters
+- Our users might cancel mid-export
+- Memory/cost efficiency matters to us
 
 **Rule of Thumb:** If you don't have a **specific reason** to buffer, stream.
 

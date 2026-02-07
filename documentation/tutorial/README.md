@@ -4,9 +4,9 @@ A comprehensive guide to building memory-efficient, production-ready Excel expor
 
 ## Overview
 
-This tutorial series teaches you how to build scalable Excel exports that handle **millions of rows** with constant memory usage. It's designed for Node.js developers who already understand the basics and want to learn streaming architecture principles.
+This tutorial series teaches us how to build scalable Excel exports that handle **millions of rows** with constant memory usage. It's designed for Node.js developers who already understand the basics and want to learn streaming architecture principles.
 
-### What You'll Learn
+### What We'll Learn
 
 - Why traditional Excel export approaches fail at scale
 - Node.js streams fundamentals and the streaming paradigm
@@ -16,7 +16,7 @@ This tutorial series teaches you how to build scalable Excel exports that handle
 
 ### Target Audience
 
-**For:** Node.js developers with 1-2 years experience building REST APIs
+**For:** Us - Node.js developers with 1-2 years experience building REST APIs
 
 **Prerequisites:**
 - Comfortable with Express.js and async/await
@@ -291,11 +291,11 @@ Already have a buffered export? Migrate in 4 steps:
 
 After completing this tutorial:
 
-1. **Run the stress tests** to see memory differences yourself
+1. **Run the stress tests** to see memory differences firsthand
 2. **Study the source code** in [exportController.js](../../api/src/controllers/exportController.js)
 3. **Experiment with modifications** (add columns, change formats, etc.)
-4. **Apply to your projects** - migrate buffered exports to streaming
-5. **Share your results** - streaming benefits compound with scale
+4. **Apply to our projects** - migrate buffered exports to streaming
+5. **Share our results** - streaming benefits compound with scale
 
 ## Contributing
 
