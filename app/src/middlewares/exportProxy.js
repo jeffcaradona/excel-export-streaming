@@ -13,9 +13,14 @@
  *   Status-code-only responses to avoid corrupting an in-flight Excel stream.
  *   502 for connection refused (API down), 504 for timeouts.
  */
+import process from "node:process";
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { debugApplication } from '../../../shared/src/debug.js';
 import { getEnv } from '../config/env.js';
+import { createMemoryLogger } from "../../../shared/src/memory.js";
+
+const memoryLogger = createMemoryLogger(process, debugApplication);
+
 
 const env = getEnv();
 const apiTarget = `http://${env.API_HOST}:${env.API_PORT}`;
@@ -41,6 +46,7 @@ const exportProxy = createProxyMiddleware({
      */
     error(err, req, res) {
       debugApplication(`Proxy error [${req.method} ${req.originalUrl}]: ${err.code || err.message}`);
+      memoryLogger('proxy-error');
 
       if (res.headersSent) {
         // Stream already started — nothing safe to send; destroy it.
@@ -58,6 +64,20 @@ const exportProxy = createProxyMiddleware({
      */
     proxyReq(proxyReq, req) {
       debugApplication(`Proxy → ${apiTarget}${proxyReq.path} [${req.method}]`);
+      memoryLogger('proxy-start');
+    },
+
+    /**
+     * Log when response starts streaming back
+     */
+    proxyRes(proxyRes, req) {
+      debugApplication(`Proxy ← ${proxyRes.statusCode} [${req.method} ${req.originalUrl}]`);
+      memoryLogger('proxy-response');
+
+      // Log peak memory when the stream completes
+      proxyRes.on('end', () => {
+        memoryLogger.logPeakSummary('proxy-complete');
+      });
     },
   },
 });
