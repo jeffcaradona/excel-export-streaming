@@ -14,15 +14,15 @@ const connections = getArgValue('--connections', 20);
 const duration = getArgValue('--duration', 60);
 const rowCount = getArgValue('--rowCount', 20_000);
 
-console.log(`🧪 Starting Stress Test`);
-console.log(`   URL: http://localhost:3001/export/report?rowCount=${rowCount}`);
+console.log(`🧪 Starting Buffered Export Stress Test`);
+console.log(`   URL: http://localhost:3001/export/report-buffered?rowCount=${rowCount}`);
 console.log(`   Connections: ${connections}`);
 console.log(`   Duration: ${duration}s`);
 console.log(`   Row Count: ${rowCount.toLocaleString()}`);
 console.log('');
 
 const result = await autocannon({
-  url: `http://localhost:3001/export/report?rowCount=${rowCount}`,
+  url: `http://localhost:3001/export/report-buffered?rowCount=${rowCount}`,
   connections,                    // Number of concurrent connections
   pipelining: 1,                  // Requests per connection
   duration,                       // Test duration in seconds

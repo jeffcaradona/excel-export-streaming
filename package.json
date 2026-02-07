@@ -20,7 +20,10 @@
     "dev:api:limited": "npm run dev:limited --workspace=api",
     "stress-test": "node stress-test.js",
     "stress-test:light": "node stress-test.js --connections 5 --duration 60",
-    "stress-test:heavy": "node stress-test.js --connections 20 --duration 60"
+    "stress-test:heavy": "node stress-test.js --connections 50 --duration 60",
+    "stress-test:buffered": "node stress-test-buffered.js",
+    "stress-test:buffered:light": "node stress-test-buffered.js --connections 5 --duration 60",
+    "stress-test:buffered:heavy": "node stress-test-buffered.js --connections 20 --duration 60"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -1,5 +1,5 @@
 import mssql from "mssql";
-import process from "node:process";
+
 import { setTimeout } from "node:timers";
 import { debugMSSQL } from "../../../shared/src/debug.js";
 import { getEnv } from "../config/env.js";
@@ -25,7 +25,7 @@ const getDbConfig = () => {
       trustServerCertificate: true,
     },
     pool: {
-      max: 25,              // Increased from 10 to handle more concurrent requests
+      max: 50,              // Increased from 10 to handle more concurrent requests
       min: 5,               // Keep 5 warm connections to reduce latency
       idleTimeoutMillis: 60000,  // Keep idle connections for 60 seconds
     },
