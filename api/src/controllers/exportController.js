@@ -5,6 +5,7 @@ import { createMemoryLogger } from '../../../shared/src/memory.js';
 import { getConnectionPool } from '../services/mssql.js';
 import { generateTimestampedFilename } from '../utils/filename.js';
 import { REPORT_COLUMNS, mapRowToExcel } from '../utils/columnMapper.js';
+import mssql from 'mssql';
 
 /**
  * Handles the streaming Excel export
@@ -47,6 +48,7 @@ export const streamReportExport = async (req, res, next) => {
     
     debugApplication('Executing stored procedure in streaming mode');
     
+    streamRequest.input("RowCount", mssql.Int, 500000); // Example input parameter, adjust as needed
     // Execute stored procedure
     streamRequest.execute('spGenerateData');
     
@@ -87,6 +89,7 @@ export const streamReportExport = async (req, res, next) => {
         const duration = Date.now() - startTime;
         debugApplication(`Export complete: ${rowCount} rows in ${duration}ms`);
         memoryLogger('Export - Complete'); // Final memory log
+        memoryLogger.logPeakSummary('Export - Peak'); // Log peak memory usage
         
         res.end();
       } catch (err) {
@@ -101,6 +104,7 @@ export const streamReportExport = async (req, res, next) => {
     req.on('close', () => {
       if (!res.writableEnded) {
         debugApplication(`Client disconnected after ${rowCount} rows`);
+        memoryLogger.logPeakSummary('Export - Peak (Disconnected)');
         
         // Cancel the database request if still active
         if (streamRequest) {
