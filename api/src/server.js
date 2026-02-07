@@ -7,7 +7,6 @@ import { normalizePort } from "../../shared/src/server.js";
 
 import { initializeDatabase, gracefulShutdown as gracefulDatabaseShutdown } from "./services/mssql.js";
 import { getEnv } from "./config/env.js";
-import { ConfigurationError } from "./utils/errors.js";
 
 import app from "./api.js";
 
