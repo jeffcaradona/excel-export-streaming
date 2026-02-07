@@ -173,23 +173,36 @@ npm install http-proxy-middleware
 - Bootstrap Express v5 server on port 3000 (from `.env`)
 - Import `debugServer` from [shared/src/debug.js](shared/src/debug.js)
 - Mount router from [app/src/app.js](app/src/app.js)
-- Graceful shutdown handling
+- Graceful shutdown handling (simpler than API - no DB to close)
 - Add error handling middleware
+- Validate environment config early (using [app/src/config/env.js](app/src/config/env.js))
 - Start server with startup logging
 
 **Key Patterns:**
 - Use `process.env.APP_PORT` for port configuration
 - Handle `SIGTERM` and `SIGINT` for graceful shutdown
 - Log server startup and shutdown events
+- Mirror API server structure but simpler (no database initialization)
+- Status code only errors (pass through stream without buffering)
 
 ---
 
-### Step 5: Create Proxy Route
+### Step 5: Create Proxy Route and App Setup
 **File:** [app/src/app.js](app/src/app.js)
+
+**Middleware Stack:**
+1. **Helmet** - Security headers
+2. **CORS** - BFF controls CORS policy (allow configured frontend domain)
+3. **JSON parser** - For future POST endpoints
+4. **Request logging** - Debug statements via `debugApplication`
+5. **Routes** - Mount export router
+6. **Health check** - Own lightweight endpoint
+7. **404 handler** - Custom not-found response
+8. **Global error handler** - Catch all errors (must be last)
 
 **Route:** `GET /exports/report`
 
-**Implementation:**
+**Proxy Implementation:**
 ```javascript
 import { createProxyMiddleware } from 'http-proxy-middleware';
 
@@ -202,8 +215,10 @@ const exportProxy = createProxyMiddleware({
   selfHandleResponse: false, // Auto-pipe streams
   onError: (err, req, res) => {
     debugApplication('Proxy error:', err);
+    // Status-code-only error: preserves stream integrity
     if (!res.headersSent) {
-      res.status(502).send('Bad Gateway');
+      const statusCode = err.code === 'ECONNREFUSED' ? 502 : 504;
+      res.status(statusCode).end();
     }
   }
 });
@@ -211,15 +226,56 @@ const exportProxy = createProxyMiddleware({
 router.get('/exports/report', exportProxy);
 ```
 
+**Health Check Endpoint:**
+```javascript
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+```
+
 **Key Points:**
 - `selfHandleResponse: false` enables automatic stream piping
 - No buffering between API and browser
-- Preserve headers from API response
-- Handle proxy-specific errors (connection refused, timeout)
+- Status-code-only errors (minimal overhead, preserves stream)
+- CORS middleware configured with allowed origin from env
+- Own health endpoint - fast, no upstream dependency
+- 502 for connection refused (API down)
+- 504 for timeouts (API slow/overloaded)
 
 ---
 
-### Step 6: Add Error Handling and Logging
+### Step 6: Environment Configuration
+**File:** [app/src/config/env.js](app/src/config/env.js)
+
+**Requirements:**
+- Use Zod schema (same pattern as API)
+- Validate: `APP_PORT`, `API_PORT`, `API_HOST`, `CORS_ORIGIN`, `NODE_ENV`
+- Throw `ConfigurationError` on validation failure
+- Support lazy loading with caching (like API)
+- Provide defaults:
+  - `APP_PORT`: 3000
+  - `API_PORT`: 3001
+  - `API_HOST`: localhost
+  - `NODE_ENV`: development
+  - `CORS_ORIGIN`: http://localhost:3000
+
+**Rationale:** Enables flexible deployment (same code, different configs)
+
+---
+
+### Step 7: Create Routes Module
+**File:** [app/src/routes/exports.js](app/src/routes/exports.js)
+
+**Requirements:**
+- Export router with `GET /report` route
+- Proxy to API's `/export/report`
+- Single responsibility: route definition and proxy setup
+- Reusable `createProxyMiddleware` function
+- Error handling via `onError` callback
+
+---
+
+### Step 8: Add Error Handling and Logging
 
 **API Service:**
 - Add Express error middleware in [api/src/server.js](api/src/server.js)
@@ -233,16 +289,19 @@ router.get('/exports/report', exportProxy);
 **BFF Service:**
 - Add Express error middleware in [app/src/server.js](app/src/server.js)
 - Log proxy failures with `debugApplication`
-- Handle API service unavailable (connection refused)
+- Handle API service unavailable (status-code-only errors):
+  - 502 Bad Gateway: API unreachable (ECONNREFUSED)
+  - 504 Gateway Timeout: API timeout (no response)
 
 **Debug Namespaces:**
-- `debugServer` - Server lifecycle events
-- `debugApplication` - Application logic and routes
-- `debugMSSQL` - Database operations and streams
+- `debugServer` - Server lifecycle events (both services)
+- `debugApplication` - Application logic and routes (BFF-specific)
+- `debugAPI` - API routes and handlers (API-specific)
+- `debugMSSQL` - Database operations and streams (API-specific)
 
 ---
 
-### Step 7: Configure NPM Scripts
+### Step 9: Configure NPM Scripts
 
 **Root [package.json](package.json):**
 ```json
@@ -268,9 +327,14 @@ router.get('/exports/report', exportProxy);
 **App [app/package.json](app/package.json):**
 ```json
 {
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
+    "http-proxy-middleware": "^2.0.6"
+  },
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "start": "node --env-file=../.env src/server.js",
+    "dev": "node --env-file=../.env --watch src/server.js"
   }
 }
 ```
@@ -278,6 +342,10 @@ router.get('/exports/report', exportProxy);
 **Install `concurrently` (if needed):**
 ```bash
 npm install -D concurrently
+
+# In app directory, install BFF dependencies:
+cd app
+npm install cors http-proxy-middleware
 ```
 
 ---
@@ -285,8 +353,11 @@ npm install -D concurrently
 ## Verification Checklist
 
 ### Initial Setup
-- [ ] Install `http-proxy-middleware` in app service
+- [ ] Install `http-proxy-middleware` and `cors` in app service
 - [ ] Install `concurrently` in root (if not present)
+- [ ] Create [app/src/config/env.js](app/src/config/env.js) with Zod validation
+- [ ] Create [app/src/routes/exports.js](app/src/routes/exports.js) with proxy route
+- [ ] Update [app/package.json](app/package.json) scripts and dependencies
 - [ ] Verify `.env` file has correct ports and DB credentials
 
 ### Database Preparation
@@ -300,14 +371,28 @@ npm install -D concurrently
 - [ ] Verify App server starts on port 3000
 - [ ] Check debug logs for startup messages
 
+### API Service Verification
+- [ ] API health check: `GET http://localhost:3001/health` returns 200 OK
+- [ ] API export endpoint: `GET http://localhost:3001/export/report` returns Excel stream
+- [ ] Verify Content-Type is `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- [ ] Verify Content-Disposition header includes timestamped filename
+
+### BFF Service Verification
+- [ ] BFF health check: `GET http://localhost:3000/health` returns 200 OK
+- [ ] BFF health endpoint is fast (no upstream API call)
+- [ ] BFF proxy route: `GET http://localhost:3000/exports/report` proxies to API
+- [ ] CORS headers present in response (Access-Control-Allow-Origin)
+- [ ] Stream passes through BFF without buffering
+
 ### Export Functionality
 - [ ] Navigate to: `http://localhost:3000/exports/report`
-- [ ] Verify Excel file begins downloading immediately
+- [ ] Excel file begins downloading immediately (no buffering)
 - [ ] Verify filename format: `report-2026-02-07-143022.xlsx` (with timestamp)
 - [ ] Open downloaded file and verify:
   - [ ] 10 columns present with correct headers
   - [ ] Data matches stored procedure output
   - [ ] All rows exported successfully
+- [ ] Both services running together: `npm run dev`
 
 ### Performance Testing
 - [ ] **1k rows:** Export completes < 1 second
@@ -321,20 +406,18 @@ npm install -D concurrently
 - [ ] Verify memory returns to baseline after export completes
 
 ### Error Scenarios
-- [ ] **Client disconnect:** Cancel download mid-stream
-  - Verify no errors crash the server
+- [ ] **Client disconnect:** Cancel download mid-stream from BFF
+  - Verify no errors crash servers
   - Check logs show graceful handling
-- [ ] **Database timeout:** Configure low timeout, try large export
-  - Verify proper error response (504 or 500)
+- [ ] **Database timeout:** Configure low timeout, try large export from BFF
+  - Verify proper error response from API (504 or 500)
+  - Verify BFF propagates error correctly
 - [ ] **API service down:** Stop API, try export from BFF
-  - Verify 502 Bad Gateway response
-  - Check proxy error logging
-
-### Production Readiness
-- [ ] Review all debug log output for sensitive data
-- [ ] Test graceful shutdown: `Ctrl+C` both services
-- [ ] Verify connection pool closes cleanly
-- [ ] Document deployment steps
+  - Verify BFF returns 502 status code (no body)
+  - Check BFF logs show proxy connection failure
+- [ ] **Stop services:** `Ctrl+C` BFF, then API
+  - Verify in-flight requests complete or terminate gracefully
+  - Verify connection pools close cleanly
 
 ---
 
@@ -357,14 +440,33 @@ npm install -D concurrently
 - **Connection Pool:** 5-25 connections (existing configuration)
 
 ### Error Handling Strategy
+
+**API Service:**
 - **Client disconnect:** Log and cleanup, no error response needed
-- **SQL errors:** 500 Internal Server Error
+- **SQL errors:** 500 Internal Server Error with error details (dev) or generic message (prod)
 - **SQL timeout:** 504 Gateway Timeout
-- **Proxy errors:** 502 Bad Gateway
-- **All errors logged with full stack traces**
+- **Validation failures:** 400 Bad Request
+- **All errors logged with full stack traces** via `debugApplication`
+
+**BFF Service:**
+- **Proxy connection refused (API down):** 502 Bad Gateway (status-code-only)
+- **Proxy timeout (API slow/overloaded):** 504 Gateway Timeout (status-code-only)
+- **Invalid request:** Pass through to API or 400 Bad Request
+- **Status-code-only responses:** Preserves stream integrity, minimal overhead
+- **All errors logged** via `debugApplication`
+
+### CORS Strategy (BFF Controls)
+- **BFF is the frontend's API gateway** - Browser connects to BFF (port 3000), not API (port 3001)
+- **BFF enforces CORS policy** - Maintains boundary between frontend and backend services
+- **Configurable allowlist** - `CORS_ORIGIN` env var controls allowed domains
+- **Development:** Allow `http://localhost:3000` (default)
+- **Production:** Configure for actual frontend domain (e.g., `https://app.example.com`)
+- **Rationale:** Protects downstream services, enables flexible deployment, prevents accidental exposure
 
 ### Security (Phase 1)
 - **No authentication** - open access for initial implementation
+- **CORS middleware** - BFF validates frontend domain
+- **Helmet headers** - Both services set security headers
 - **No input validation** - no parameters accepted yet
 - **Phase 2 considerations:**
   - Add JWT validation middleware
@@ -389,14 +491,22 @@ npm install -D concurrently
 ## File Summary
 
 ### Files to Create/Modify
-1. [api/src/server.js](api/src/server.js) - Create Express server (currently empty)
-2. [api/src/api.js](api/src/api.js) - Create export endpoint with ExcelJS streaming (currently empty)
-3. [app/src/server.js](app/src/server.js) - Create Express server (currently empty)
-4. [app/src/app.js](app/src/app.js) - Create proxy route (currently empty)
-5. [app/package.json](app/package.json) - Add `http-proxy-middleware` dependency
-6. [package.json](package.json) - Add dev script with `concurrently`
-7. [api/package.json](api/package.json) - Add start/dev scripts
-8. [app/package.json](app/package.json) - Add start/dev scripts
+
+**API Service (mostly complete):**
+1. [api/src/server.js](api/src/server.js) - ✅ Express server with graceful shutdown
+2. [api/src/api.js](api/src/api.js) - ✅ Express app with middleware and routes
+3. [api/src/routes/export.js](api/src/routes/export.js) - ✅ Streaming and buffered export endpoints
+4. [api/package.json](api/package.json) - ✅ Dependencies and scripts
+
+**BFF Service (to implement):**
+5. [app/src/server.js](app/src/server.js) - Create Express server (currently stub)
+6. [app/src/app.js](app/src/app.js) - Create Express app with middleware, CORS, routes (currently stub)
+7. [app/src/config/env.js](app/src/config/env.js) - **NEW** Environment validation (Zod schema)
+8. [app/src/routes/exports.js](app/src/routes/exports.js) - **NEW** Proxy route definition
+9. [app/package.json](app/package.json) - Add dependencies and scripts
+
+**Root Configuration:**
+10. [package.json](package.json) - Add dev scripts with `concurrently`
 
 ### Files to Use (No Changes)
 - [api/src/services/mssql.js](api/src/services/mssql.js) - Import and use as-is
@@ -422,23 +532,25 @@ npm install -D concurrently
 
 ## Estimated Effort
 
-**Based on current state:**
-- **Setup and dependencies:** 0.5 hours
-- **API server + export endpoint:** 2-3 hours
-- **BFF server + proxy route:** 1-2 hours
-- **Error handling and logging:** 1-2 hours
+**Actual Progress:**
+- **Setup and dependencies:** ✅ Complete
+- **API server + export endpoint:** ✅ Complete (API fully functional)
+- **BFF server + proxy route:** ~1-2 hours remaining
+- **Error handling and logging:** ✅ Integrated throughout
 - **Testing and verification:** 2-3 hours
-- **Documentation and cleanup:** 1 hour
+- **Documentation and cleanup:** 0.5-1 hour
 
-**Total: 8-12 hours (1-1.5 developer-days)**
+**Remaining effort: 3-6 hours to full completion**
 
-**ROM validation:** Original estimate was 5-7 days, but:
-- Stored procedure is already ready (saved 1-2 days)
-- MSSQL service is production-ready (saved scaffolding time)
-- No auth complexity (saved 1-2 days)
-- Simplified requirements (plain Excel, no parameters)
+**ROM validation:** Original estimate was 5-7 days. **Actual progress:**
+- ✅ Stored procedure ready (saved 1-2 days)
+- ✅ MSSQL service production-ready (saved scaffolding time)
+- ✅ API fully implemented (saved 2-3 days)
+- ✅ No auth complexity (saved 1-2 days)
+- ✅ Simplified requirements (plain Excel, no parameters)
+- 🔄 BFF remaining (1-2 hours of actual coding)
 
-**Actual effort aligns with "Scenario A" from original ROM.**
+**On track: Scenario A timeline, ~3 days elapsed. ~4-6 hours to completion.**
 
 ---
 
