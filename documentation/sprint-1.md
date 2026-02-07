@@ -227,7 +227,7 @@ test('on("error") destroys response when headers already sent', async () => {
 ## Verification Checklist
 
 - [ ] sinon installed: `npm install --save-dev sinon` ✓ (already done)
-- [ ] Verify test runner works: `node --test api/src/controllers/*.test.js`
+- [ ] Verify test runner works: `node --test api/tests/controllers/*.test.js`
 - [ ] All 4 changes applied to exportController.js
 - [ ] No lint errors: `npm run lint`
 - [ ] All 10 unit tests pass: `npm test`
