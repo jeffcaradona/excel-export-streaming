@@ -27,6 +27,13 @@ export default [
         after: 'readonly',
         beforeEach: 'readonly',
         afterEach: 'readonly',
+        setImmediate: 'readonly',
+        clearImmediate: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        process: 'readonly',
       },
     },
     rules: {

@@ -20,6 +20,11 @@
     "dev:api": "npm run dev --workspace=api",
     "dev:app": "npm run dev --workspace=app",
     "dev:api:limited": "npm run dev:limited --workspace=api",
+    "test": "node --test api/tests/**/*.test.js",
+    "test:smoke": "node --test api/tests/**/*.smoke.test.js",
+    "test:integration": "node --test api/tests/**/*.integration.test.js --test-timeout=10000",
+    "test:coverage": "c8 node --test api/tests/**/*.test.js",
+    "test:stress": "node stress-test-error-recovery.js",
     "stress-test": "node stress-test.js",
     "stress-test:light": "node stress-test.js --connections 5 --duration 60",
     "stress-test:heavy": "node stress-test.js --connections 50 --duration 60",
@@ -34,6 +39,7 @@
     "cross-env": "^10.1.0",
     "eslint": "^10.0.0",
     "eslint-plugin-n": "^17.23.2",
-    "nodemon": "^3.1.11"
+    "nodemon": "^3.1.11",
+    "sinon": "^21.0.1"
   }
 }
