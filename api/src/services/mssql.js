@@ -2,31 +2,22 @@ import mssql from "mssql";
 import process from "node:process";
 import { setTimeout } from "node:timers";
 import { debugMSSQL } from "../../../shared/src/debug.js";
+import { getEnv } from "../config/env.js";
+import { DatabaseError } from "../utils/errors.js";
 
 let isShuttingDown = false;
 let pool = null;
 let poolConnect = null;
 
-// Validate required environment variables
-const validateEnvironment = () => {
-  const required = ["DB_USER", "DB_PASSWORD", "DB_HOST", "DB_NAME"];
-  const missing = required.filter((key) => !process.env[key]);
-  if (missing.length > 0) {
-    throw new Error(
-      `Missing required environment variables: ${missing.join(", ")}`
-    );
-  }
-};
-
-// Create config lazily to ensure environment variables are loaded
+// Create config lazily to ensure environment variables are loaded and validated
 const getDbConfig = () => {
-  validateEnvironment();
+  const env = getEnv();
   return {
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    server: process.env.DB_HOST,
-    port: Number.parseInt(process.env.DB_PORT || "1433"),
-    database: process.env.DB_NAME,
+    user: env.DB_USER,
+    password: env.DB_PASSWORD,
+    server: env.DB_HOST,
+    port: env.DB_PORT,
+    database: env.DB_NAME,
     requestTimeout: 30000, // 30 second timeout for requests
     connectionTimeout: 15000, // 15 second timeout for initial connection
     options: {
@@ -83,7 +74,10 @@ export const getConnectionPool = async () => {
         });
         pool = null;
         poolConnect = null; // Reset to allow retry
-        throw err;
+        throw new DatabaseError(
+          `Failed to connect to database: ${err.message}`,
+          err
+        );
       }
     })();
   }
@@ -91,7 +85,7 @@ export const getConnectionPool = async () => {
   
   // Validate pool is still connected
   if (!pool) {
-    throw new Error("Connection pool is not available. Please try again.");
+    throw new DatabaseError("Connection pool is not available. Please try again.");
   }
   
   return pool;
@@ -173,7 +167,10 @@ export const executeQuery = async (queryFn, operationName = "Database operation"
       await resetConnectionPool();
     }
     
-    throw err;
+    throw new DatabaseError(
+      `${operationName} failed: ${err.message}`,
+      err
+    );
   }
 };
 

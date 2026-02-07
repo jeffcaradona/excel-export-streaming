@@ -7,6 +7,7 @@ import { getConnectionPool } from '../services/mssql.js';
 import { generateTimestampedFilename } from '../utils/filename.js';
 import { REPORT_COLUMNS, mapRowToExcel } from '../utils/columnMapper.js';
 import { DEFAULT_ROW_COUNT, validateRowCount } from '../config/export.js';
+import { ExportError, DatabaseError } from '../utils/errors.js';
 
 /**
  * STREAMING EXPORT CONTROLLER
@@ -143,7 +144,13 @@ export const streamReportExport = async (req, res, next) => {
       // If headers not yet sent, we can send JSON error response
       // If streaming already started, can't change status code - just log
       if (!res.headersSent) {
-        res.status(500).json({ error: 'Database error occurred' });
+        const dbError = new DatabaseError('Database error occurred', err);
+        res.status(dbError.status).json({
+          error: {
+            message: dbError.message,
+            code: dbError.code
+          }
+        });
       }
     });
     
@@ -170,7 +177,13 @@ export const streamReportExport = async (req, res, next) => {
       } catch (err) {
         debugApplication('Error finalizing workbook:', err);
         if (!res.headersSent) {
-          res.status(500).json({ error: 'Failed to generate Excel file' });
+          const exportError = new ExportError('Failed to generate Excel file');
+          res.status(exportError.status).json({
+            error: {
+              message: exportError.message,
+              code: exportError.code
+            }
+          });
         }
       }
     });

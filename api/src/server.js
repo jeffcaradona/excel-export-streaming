@@ -6,15 +6,26 @@ import { debugServer } from "../../shared/src/debug.js";
 import { normalizePort } from "../../shared/src/server.js";
 
 import { initializeDatabase, gracefulShutdown as gracefulDatabaseShutdown } from "./services/mssql.js";
+import { getEnv } from "./config/env.js";
+import { ConfigurationError } from "./utils/errors.js";
 
 import app from "./api.js";
 
-// Create HTTP server. API_PORT is defined in .env
+// Validate environment configuration on startup
+let env;
+try {
+  env = getEnv();
+  debugServer(`Environment validated: NODE_ENV=${env.NODE_ENV}, API_PORT=${env.API_PORT}`);
+} catch (err) {
+  debugServer(`Failed to validate environment: ${err.message}`);
+  setImmediate(() => process.exit(1));
+  process.exit(1); // Unreachable but satisfies type checker
+}
+
 /**
  * Get port from environment and store in Express.
  */
-
-const port = normalizePort(process.env.API_PORT || "3000");
+const port = normalizePort(env.API_PORT || "3000");
 app.set("port", port);
 
 /**
