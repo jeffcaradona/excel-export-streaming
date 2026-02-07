@@ -16,7 +16,9 @@
   "scripts": {
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "dev": "npx concurrently --names api,app --prefix-colors blue,green \"npm run dev --workspace=api\" \"npm run dev --workspace=app\"",
     "dev:api": "npm run dev --workspace=api",
+    "dev:app": "npm run dev --workspace=app",
     "dev:api:limited": "npm run dev:limited --workspace=api",
     "stress-test": "node stress-test.js",
     "stress-test:light": "node stress-test.js --connections 5 --duration 60",
