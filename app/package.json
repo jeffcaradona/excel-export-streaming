@@ -1,8 +1,9 @@
 {
-    "name": "excel-export-streaming-application",
-    "private": true,
-    "type": "module",
-    "dependencies": {
-        "express": "^5.2.1"
-    }
+  "name": "excel-export-streaming-application",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "express": "^5.2.1"
+  }
 }

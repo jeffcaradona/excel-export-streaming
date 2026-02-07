@@ -1,11 +1,16 @@
 {
-    "name": "excel-export-streaming-application-api",
-    "private": true,
-    "type": "module",
-    "dependencies": {
-        "dotenv": "^17.2.4",
-        "exceljs": "^4.4.0",
-        "express": "^5.2.1",
-        "mssql": "^12.2.0"
-    }
+  "name": "excel-export-streaming-application-api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=../.env src/server.js",
+    "dev": "node --env-file=../.env --watch src/server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.4",
+    "exceljs": "^4.4.0",
+    "express": "^5.2.1",
+    "mssql": "^12.2.0"
+  }
 }

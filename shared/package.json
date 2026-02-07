@@ -1,15 +1,17 @@
 {
-    "name": "excel-export-streaming-shared",
-    "private": true,
-    "type": "module",
-    "exports": {
-        "./debug": "./src/debug.js",
-        "./memory": "./src/memory.js"
-    },
-    "files": [
-        "src"
-    ],
-    "dependencies": {
-        "debug": "~4.4.3"
-    }
+  "name": "excel-export-streaming-shared",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server": "./src/server.js",
+    "./debug": "./src/debug.js",
+    "./memory": "./src/memory.js"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "debug": "~4.4.3"
+  }
 }
