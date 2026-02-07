@@ -1,7 +1,7 @@
 import process from 'node:process';
 import ExcelJS from 'exceljs';
 import mssql from 'mssql';
-import { debugApplication } from '../../../shared/src/debug.js';
+import { debugAPI } from "../../../shared/src/debug.js";
 import { createMemoryLogger } from '../../../shared/src/memory.js';
 import { getConnectionPool } from '../services/mssql.js';
 import { generateTimestampedFilename } from '../utils/filename.js';
@@ -68,7 +68,7 @@ export const streamReportExport = async (req, res, next) => {
   // INITIALIZATION
   // Track performance metrics and memory usage throughout the export
   const startTime = Date.now();
-  const memoryLogger = createMemoryLogger(process, debugApplication);
+  const memoryLogger = createMemoryLogger(process, debugAPI);
   let rowCount = 0;
   let streamRequest = null;
   
@@ -78,7 +78,9 @@ export const streamReportExport = async (req, res, next) => {
   
   try {
     // LOG: Initial state
-    debugApplication(`Starting streaming Excel export (${requestedRows} rows requested)`);
+    debugAPI(
+      `Starting streaming Excel export (${requestedRows} rows requested)`,
+    );
     memoryLogger('Export'); // Log initial memory baseline
     
     // RESPONSE SETUP
@@ -108,7 +110,9 @@ export const streamReportExport = async (req, res, next) => {
     streamRequest.stream = true; // Enable streaming - events emitted per row instead of loadAll
     
     // LOG: Database execution
-    debugApplication(`Executing stored procedure in streaming mode with ${requestedRows} rows`);
+    debugAPI(
+      `Executing stored procedure in streaming mode with ${requestedRows} rows`,
+    );
     
     // STORED PROCEDURE EXECUTION
     // Execute with row count parameter
@@ -132,14 +136,14 @@ export const streamReportExport = async (req, res, next) => {
       // Every 5000 rows, check memory to detect potential issues
       if (rowCount % 5000 === 0) {
         memoryLogger(`Export - ${rowCount} rows`);
-        debugApplication(`Processed ${rowCount} rows`);
+        debugAPI(`Processed ${rowCount} rows`);
       }
     });
     
     // ERROR EVENT: Fired if database streaming fails
     // Could indicate: connection lost, timeout, SQL error, etc.
     streamRequest.on('error', (err) => {
-      debugApplication('SQL stream error:', err);
+      debugAPI("SQL stream error:", err);
       
       // If headers not yet sent, we can send JSON error response
       // If streaming already started, can't change status code - just log
@@ -158,7 +162,7 @@ export const streamReportExport = async (req, res, next) => {
     // This is where we finalize the Excel file
     streamRequest.on('done', async () => {
       try {
-        debugApplication(`SQL stream complete. Total rows: ${rowCount}`);
+        debugAPI(`SQL stream complete. Total rows: ${rowCount}`);
         
         // WORKBOOK FINALIZATION
         // These calls close the Excel stream and ensure all data is flushed
@@ -168,14 +172,14 @@ export const streamReportExport = async (req, res, next) => {
         
         // LOGGING & METRICS
         const duration = Date.now() - startTime;
-        debugApplication(`Export complete: ${rowCount} rows in ${duration}ms`);
+        debugAPI(`Export complete: ${rowCount} rows in ${duration}ms`);
         memoryLogger('Export - Complete'); // Final current memory snapshot
         memoryLogger.logPeakSummary('Export - Peak'); // Peak memory during entire operation
         
         // Close the HTTP response (browser receives complete file)
         res.end();
       } catch (err) {
-        debugApplication('Error finalizing workbook:', err);
+        debugAPI("Error finalizing workbook:", err);
         if (!res.headersSent) {
           const exportError = new ExportError('Failed to generate Excel file');
           res.status(exportError.status).json({
@@ -193,7 +197,7 @@ export const streamReportExport = async (req, res, next) => {
     // This prevents orphaned database queries consuming resources
     req.on('close', () => {
       if (!res.writableEnded) {
-        debugApplication(`Client disconnected after ${rowCount} rows`);
+        debugAPI(`Client disconnected after ${rowCount} rows`);
         memoryLogger.logPeakSummary('Export - Peak (Disconnected)');
         
         // Cancel the database request if it's still active
@@ -206,7 +210,7 @@ export const streamReportExport = async (req, res, next) => {
   } catch (err) {
     // INITIALIZATION ERRORS
     // Errors setting up the export (before streaming starts)
-    debugApplication('Error setting up export stream:', err);
+    debugAPI("Error setting up export stream:", err);
     next(err); // Pass to Express global error handler
   }
 };
@@ -252,14 +256,16 @@ export const streamReportExport = async (req, res, next) => {
 export const bufferReportExport = async (req, res, next) => {
   // INITIALIZATION
   const startTime = Date.now();
-  const memoryLogger = createMemoryLogger(process, debugApplication);
+  const memoryLogger = createMemoryLogger(process, debugAPI);
 
   // Get and validate row count from query parameter
   const requestedRows = validateRowCount(req.query.rowCount || DEFAULT_ROW_COUNT);
 
   try {
     // LOG: Initial state
-    debugApplication(`Starting non-streaming Excel export (${requestedRows} rows requested)`);
+    debugAPI(
+      `Starting non-streaming Excel export (${requestedRows} rows requested)`,
+    );
     memoryLogger("Export - Start"); // Log initial memory
 
     // DATABASE CONNECTION & EXECUTION
@@ -268,7 +274,7 @@ export const bufferReportExport = async (req, res, next) => {
     const pool = await getConnectionPool();
     const request = pool.request();
 
-    debugApplication(
+    debugAPI(
       `Executing stored procedure (loading ${requestedRows} rows into memory)`,
     );
 
@@ -282,7 +288,7 @@ export const bufferReportExport = async (req, res, next) => {
     const rowCount = rows.length;
 
     // MEMORY CHECKPOINT
-    debugApplication(`Loaded ${rowCount} rows into memory`);
+    debugAPI(`Loaded ${rowCount} rows into memory`);
     memoryLogger("Export - Data Loaded"); // Snapshot after data buffered
 
     // RESPONSE SETUP
@@ -301,7 +307,7 @@ export const bufferReportExport = async (req, res, next) => {
     const worksheet = workbook.addWorksheet("Report");
     worksheet.columns = REPORT_COLUMNS;
 
-    debugApplication("Writing rows to Excel workbook");
+    debugAPI("Writing rows to Excel workbook");
 
     // WRITE ALL ROWS TO WORKBOOK IN MEMORY
     // This loop adds each database row to the Excel worksheet
@@ -312,14 +318,14 @@ export const bufferReportExport = async (req, res, next) => {
       // MEMORY TRACKING: Log memory periodically during write
       if ((i + 1) % 5000 === 0) {
         memoryLogger(`Export - ${i + 1} rows written`);
-        debugApplication(`Written ${i + 1} rows to workbook`);
+        debugAPI(`Written ${i + 1} rows to workbook`);
       }
     }
 
     // MEMORY CHECKPOINT
     memoryLogger("Export - Rows Written"); // Snapshot after all rows added
 
-    debugApplication("Generating Excel file buffer");
+    debugAPI("Generating Excel file buffer");
 
     // GENERATE EXCEL FILE BUFFER
     // This creates the complete .xlsx file in memory as a Buffer
@@ -332,7 +338,7 @@ export const bufferReportExport = async (req, res, next) => {
 
     // FINAL METRICS
     const duration = Date.now() - startTime;
-    debugApplication(`Export complete: ${rowCount} rows in ${duration}ms`);
+    debugAPI(`Export complete: ${rowCount} rows in ${duration}ms`);
     memoryLogger.logPeakSummary("Export - Peak"); // Peak memory across entire operation
 
     // SEND FILE TO BROWSER
@@ -341,7 +347,7 @@ export const bufferReportExport = async (req, res, next) => {
     res.send(buffer);
   } catch (err) {
     // ERROR HANDLING
-    debugApplication("Error during non-streaming export:", err);
+    debugAPI("Error during non-streaming export:", err);
     next(err); // Pass to Express global error handler
   }
 };

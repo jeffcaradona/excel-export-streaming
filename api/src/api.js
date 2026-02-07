@@ -1,7 +1,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import process from 'node:process';
-import { debugApplication } from '../../shared/src/debug.js';
+import { debugAPI } from '../../shared/src/debug.js';
 import exportRouter from './routes/export.js';
 
 const app = express();
@@ -14,7 +14,7 @@ app.use(express.json());
 
 // Request logging middleware
 app.use((req, _res, next) => {
-  debugApplication(`${req.method} ${req.url}`);
+  debugAPI(`${req.method} ${req.url}`);
   next();
 });
 
@@ -39,7 +39,7 @@ app.use((_req, res) => {
 // Global error handler - must be last
 // Handles all errors thrown by route handlers and middleware
 app.use((err, _req, res, next) => {
-  debugApplication('Error:', err);
+  debugAPI("Error:", err);
   
   // Determine HTTP status code
   const statusCode = err.status || 500;
