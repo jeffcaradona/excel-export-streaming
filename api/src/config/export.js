@@ -10,7 +10,7 @@ export const DEFAULT_ROW_COUNT = 30000;
 /**
  * Maximum allowed row count (safety limit)
  */
-export const MAX_ROW_COUNT = 10000000;
+export const MAX_ROW_COUNT = 1048576;
 
 /**
  * Minimum row count
