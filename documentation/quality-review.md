@@ -2,7 +2,21 @@
 
 > **Date:** February 7, 2026  
 > **Scope:** Full codebase review for bad programming practices  
+> **Last Updated:** February 7, 2026 (Sprint 1 Complete)  
 > **Exclusion:** Buffered export endpoint intentionally loads all data into memory for demo/comparison — not a bug
+
+---
+
+## Sprint 1 Summary
+
+**Status:** ✅ Complete  
+**Issues Fixed:** #1, #2, #3 (HIGH severity streaming error handling)  
+**Version Update:** `0.0.1` → `0.1.0` (critical stability fixes)  
+**Changes:** 4 interconnected fixes in [exportController.js](../../api/src/controllers/exportController.js) for error handling, response cleanup, and stream management  
+**Test Coverage:** 10 unit tests + 3 smoke tests + 6 integration tests ✅ PASSING  
+**Lint Status:** 0 errors ✅
+
+**Remaining Issues:** 13 (5 MEDIUM, 8 LOW) — scheduled for future sprints
 
 ---
 
@@ -19,121 +33,136 @@
 
 ## Summary Table
 
-| # | Issue | Category | Severity | File |
-|---|-------|----------|----------|------|
-| 1 | Floating promise on `execute()` | Error Handling | **HIGH** | exportController.js |
-| 2 | Response never closed on mid-stream SQL error | Stream / Leak | **HIGH** | exportController.js |
-| 3 | Unhandled rejection in async `on('done')` | Error / Zalgo | **HIGH** | exportController.js |
-| 4 | No backpressure in row handler | Stream / Leak | **HIGH** | exportController.js |
-| 5 | Unhandled rejection in pool error handler | Error Handling | **MEDIUM** | mssql.js |
-| 6 | Shutdown timer never cleared | Event Loop | **MEDIUM** | mssql.js |
-| 7 | No error handler on `res` stream | Stream Issue | **MEDIUM** | exportController.js |
-| 8 | `res.end()` instead of `res.destroy()` on proxy error | Stream Issue | **MEDIUM** | exportProxy.js |
-| 9 | Event handlers attached after `listen()` | Error / Race | **LOW** | server.js (api) |
-| 10 | Dead `setImmediate` before `process.exit` | Dead Code | **LOW** | server.js (api) |
-| 11 | `process.memoryUsage()` in hot path | Event Loop | **LOW** | exportController.js |
-| 12 | Polymorphic error objects (conditional spread) | Deopt | **LOW** | api.js / app.js |
-| 13 | Inconsistent error class shapes | Deopt | **LOW** | errors.js (api) |
-| 14 | `parseInt` without radix | Best Practice | **LOW** | stress-test*.js |
-| 15 | `isPoolHealthy` dead code | Dead Code | **LOW** | mssql.js |
-| 16 | `util._extend` deprecation in http-proxy | Third-party Dep | **LOW** | http-proxy@1.18.1 |
+| # | Issue | Category | Severity | Status | File |
+|---|-------|----------|----------|--------|------|
+| 1 | Floating promise on `execute()` | Error Handling | **HIGH** | ✅ FIXED | exportController.js |
+| 2 | Response never closed on mid-stream SQL error | Stream / Leak | **HIGH** | ✅ FIXED | exportController.js |
+| 3 | Unhandled rejection in async `on('done')` | Error / Zalgo | **HIGH** | ✅ FIXED | exportController.js |
+| 4 | No backpressure in row handler | Stream / Leak | **HIGH** | ⏳ PLANNED | exportController.js |
+| 5 | Unhandled rejection in pool error handler | Error Handling | MEDIUM | ⏳ PLANNED | mssql.js |
+| 6 | Shutdown timer never cleared | Event Loop | MEDIUM | ⏳ PLANNED | mssql.js |
+| 7 | No error handler on `res` stream | Stream Issue | MEDIUM | ⏳ PLANNED | exportController.js |
+| 8 | `res.end()` instead of `res.destroy()` on proxy error | Stream Issue | MEDIUM | ⏳ PLANNED | exportProxy.js |
+| 9 | Event handlers attached after `listen()` | Error / Race | LOW | ⏳ PLANNED | server.js (api) |
+| 10 | Dead `setImmediate` before `process.exit` | Dead Code | LOW | ⏳ PLANNED | server.js (api) |
+| 11 | `process.memoryUsage()` in hot path | Event Loop | LOW | ⏳ PLANNED | exportController.js |
+| 12 | Polymorphic error objects (conditional spread) | Deopt | LOW | ⏳ PLANNED | api.js / app.js |
+| 13 | Inconsistent error class shapes | Deopt | LOW | ⏳ PLANNED | errors.js (api) |
+| 14 | `parseInt` without radix | Best Practice | LOW | ⏳ PLANNED | stress-test*.js |
+| 15 | `isPoolHealthy` dead code | Dead Code | LOW | ⏳ PLANNED | mssql.js |
+| 16 | `util._extend` deprecation in http-proxy | Third-party Dep | LOW | ⏳ PLANNED | http-proxy@1.18.1 |
 
 ---
 
-## HIGH Severity
+## ✅ FIXED ISSUES (Sprint 1)
 
 ### 1. Floating Promise — `streamRequest.execute()` not caught
 
-**File:** [api/src/controllers/exportController.js](api/src/controllers/exportController.js) ~line 122  
-**Category:** Error Handling / Floating Promise
+**File:** [api/src/controllers/exportController.js](../../api/src/controllers/exportController.js#L128-L146)  
+**Category:** Error Handling / Floating Promise  
+**Status:** ✅ FIXED (Sprint 1)
 
-```javascript
-streamRequest.input("RowCount", mssql.Int, requestedRows);
-streamRequest.execute('spGenerateData');
-```
+**Problem:** In mssql streaming mode, `.execute()` returns a Promise that is neither awaited nor `.catch()`ed. If the stored procedure doesn't exist or the connection drops before execution starts, the promise rejects and produces an **unhandled promise rejection** — Node.js terminates the process.
 
-**Problem:** In mssql streaming mode, `.execute()` returns a Promise that is neither awaited nor `.catch()`ed. If the stored procedure doesn't exist or the connection drops before execution starts, the promise rejects and produces an **unhandled promise rejection** — Node.js terminates the process. The `on('error')` event fires separately and doesn't catch the rejected promise.
-
-**Fix:**
+**Solution Applied:**
 ```javascript
 streamRequest.execute('spGenerateData').catch((err) => {
+  if (streamError) return;  // Guard flag prevents double-handling
+  streamError = true;
+  
   debugAPI("Execute failed:", err);
   if (!res.headersSent) {
     const dbError = new DatabaseError('Database error occurred', err);
-    res.status(dbError.status).json({
-      error: { message: dbError.message, code: dbError.code }
-    });
+    try {
+      res.status(dbError.status).json({
+        error: { message: dbError.message, code: dbError.code }
+      });
+    } catch (jsonErr) {
+      debugAPI("Failed to send error response:", jsonErr);
+    }
   } else {
     res.destroy(err);
   }
+  
+  if (streamRequest) {
+    streamRequest.cancel();
+  }
 });
 ```
+
+**Impact:** Process no longer crashes from unhandled promise rejection before streaming starts.
 
 ---
 
 ### 2. Response Stream Never Closed on SQL Error Mid-Stream
 
-**File:** [api/src/controllers/exportController.js](api/src/controllers/exportController.js) ~line 141-155  
-**Category:** Stream Issue / Memory Leak
+**File:** [api/src/controllers/exportController.js](../../api/src/controllers/exportController.js#L166-L187)  
+**Category:** Stream Issue / Memory Leak  
+**Status:** ✅ FIXED (Sprint 1)
 
+**Problem:** If streaming has already started (`headersSent` is true) and a SQL error occurs, the response stream is never closed, leaving the connection open and consuming memory.
+
+**Solution Applied:**
 ```javascript
 streamRequest.on('error', (err) => {
+  if (streamError) return;  // Guard flag prevents double-handling
+  streamError = true;
+  
   debugAPI("SQL stream error:", err);
   if (!res.headersSent) {
     const dbError = new DatabaseError('Database error occurred', err);
-    res.status(dbError.status).json({ /* ... */ });
+    try {
+      res.status(dbError.status).json({
+        error: { message: dbError.message, code: dbError.code }
+      });
+    } catch (jsonErr) {
+      debugAPI("Failed to send error response:", jsonErr);
+    }
+  } else {
+    res.destroy(err);  // ← FIX: Close stream if already streaming
   }
-  // When headersSent === true: error logged, response LEFT OPEN
+  
+  if (streamRequest) {
+    streamRequest.cancel();
+  }
 });
 ```
 
-**Problem:** If streaming has already started (`headersSent` is true) and a SQL error occurs, the response stream is never closed. The client receives a partial/corrupt Excel file and hangs waiting for the transfer to complete. The Express connection remains open, consuming memory and a file descriptor.
-
-**Fix:** Add `else` branch:
-```javascript
-} else {
-  res.destroy(err); // Abort the in-flight transfer
-}
-```
+**Impact:** Mid-stream SQL errors now properly close the response, preventing connection leaks and client hangs.
 
 ---
 
 ### 3. Async Event Listener — Unhandled Rejection from `on('done')`
 
-**File:** [api/src/controllers/exportController.js](api/src/controllers/exportController.js) ~line 159  
-**Category:** Error Handling / Zalgo
+**File:** [api/src/controllers/exportController.js](../../api/src/controllers/exportController.js#L213-L231)  
+**Category:** Error Handling / Zalgo  
+**Status:** ✅ FIXED (Sprint 1)
 
-```javascript
-streamRequest.on('done', async () => {
-  try {
-    await worksheet.commit();
-    await workbook.commit();
-    res.end();
-  } catch (err) {
-    debugAPI("Error finalizing workbook:", err);
-    if (!res.headersSent) {
-      // ... send error response
-    }
-    // If headersSent is true: error silently swallowed, response left open
-  }
-});
-```
+**Problem:** Event emitters discard the returned Promise from `async` listeners. When `headersSent` is true, errors are silently swallowed and the response left dangling, or rejections are unhandled.
 
-**Problem:** Event emitters discard the returned Promise from `async` listeners. If the `catch` block itself throws (e.g., `res.status().json()` fails because the socket is destroyed), the rejection is **unhandled** and the process crashes. When `headersSent` is true, the error is silently swallowed and the response left dangling.
-
-**Fix:**
+**Solution Applied:**
 ```javascript
 } catch (err) {
+  if (streamError) return;  // Guard flag prevents double-handling
+  streamError = true;
+  
   debugAPI("Error finalizing workbook:", err);
   if (!res.headersSent) {
-    res.status(500).json({
-      error: { message: 'Failed to generate Excel file', code: 'EXPORT_ERROR' }
-    });
+    const exportError = new ExportError('Failed to generate Excel file');
+    try {
+      res.status(exportError.status).json({
+        error: { message: exportError.message, code: exportError.code }
+      });
+    } catch (jsonErr) {
+      debugAPI("Failed to send error response:", jsonErr);
+    }
   } else {
-    res.destroy(err); // Force-close the partially-written response
+    res.destroy(err);  // ← FIX: Force-close partially-written stream
   }
 }
 ```
+
+**Impact:** Workbook finalization errors properly handled; process no longer crashes from unhandled rejections.
 
 ---
 
@@ -473,11 +502,11 @@ mergedOptions = extend({}, options);
 
 ## Recommended Fix Order
 
-1. **Issues #1-4** (exportController.js) — Can crash the process, leak connections, or consume unbounded memory
-2. **Issues #5-8** (mssql.js, exportProxy.js) — Unhandled rejections, delayed shutdown, stream corruption
-3. **Issue #16** (http-proxy@1.18.1) — Apply patch-package to replace `util._extend` with `Object.assign`
-4. **Issues #9-15** — Clean up dead code, minor deopt, best practices
+1. ✅ **Issues #1-3** (exportController.js) — COMPLETE (Sprint 1)
+2. ⏳ **Issues #4-8** (exportController.js, mssql.js, exportProxy.js) — PLANNED (Sprint 2)
+3. ⏳ **Issue #16** (http-proxy@1.18.1) — PLANNED (patch-package)
+4. ⏳ **Issues #9-15** — PLANNED (cleanup, deopt, best practices)
 
 ---
 
-*Last Updated: February 7, 2026*
+*Last Updated: February 7, 2026 (Sprint 1 Complete)*
