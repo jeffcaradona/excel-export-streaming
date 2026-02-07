@@ -38,7 +38,8 @@ app.use((_req, res) => {
 
 // Global error handler - must be last
 // Handles all errors thrown by route handlers and middleware
-app.use((err, _req, res, next) => {
+// eslint-disable-next-line no-unused-vars
+app.use((err, _req, res, _next) => {
   debugAPI("Error:", err);
   
   // Determine HTTP status code

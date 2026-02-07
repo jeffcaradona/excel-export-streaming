@@ -3,7 +3,7 @@
  */
 import { z } from 'zod';
 import { ConfigurationError } from '../utils/errors.js';
-
+import process from 'node:process';
 /**
  * Define expected environment variables and their types
  */
