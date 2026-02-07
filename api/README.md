@@ -41,11 +41,13 @@ All environment variables are validated on startup using Zod schema. Missing req
 ## Running the Server
 
 **Development Mode** (with auto-reload):
+
 ```bash
 npm run dev
 ```
 
 **Production Mode**:
+
 ```bash
 npm start
 ```
@@ -57,6 +59,7 @@ npm start
 Health check endpoint to verify the API is running and responsive.
 
 **Response:**
+
 ```json
 {
   "status": "ok",
@@ -72,6 +75,7 @@ Streams an Excel file directly from the database. Uses memory-efficient streamin
 - `rowCount` (optional, default: 30000, max: 10000000) - Number of rows to export
 
 **Example Requests:**
+
 ```
 GET /export/report?rowCount=1000
 GET /export/report?rowCount=30000  # Default

@@ -7,7 +7,9 @@ import console from 'node:console';
 const args = process.argv.slice(2);
 const getArgValue = (argName, defaultValue) => {
   const index = args.indexOf(argName);
-  return index !== -1 && args[index + 1] ? parseInt(args[index + 1]) : defaultValue;
+  return index !== -1 && args[index + 1]
+    ? Number.parseInt(args[index + 1])
+    : defaultValue;
 };
 
 const connections = getArgValue('--connections', 20);
