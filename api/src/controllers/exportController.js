@@ -71,6 +71,7 @@ export const streamReportExport = async (req, res, next) => {
   const memoryLogger = createMemoryLogger(process, debugAPI);
   let rowCount = 0;
   let streamRequest = null;
+  let streamError = false; // Guard against multiple simultaneous error handlers
   
   // Get and validate row count from query parameter
   // validateRowCount() ensures value is between MIN_ROW_COUNT and MAX_ROW_COUNT
@@ -118,7 +119,26 @@ export const streamReportExport = async (req, res, next) => {
     // Execute with row count parameter
     // In streaming mode, this emits 'row' events as data flows from MSSQL
     streamRequest.input("RowCount", mssql.Int, requestedRows);
-    streamRequest.execute('spGenerateData');
+    streamRequest.execute('spGenerateData').catch((err) => {
+      if (streamError) return; // Prevent double-handling
+      streamError = true;
+      debugAPI("Execute failed:", err);
+      if (res.headersSent) {
+        res.destroy(err);
+      } else {
+        const dbError = new DatabaseError('Database error occurred', err);
+        try {
+          res.status(dbError.status).json({
+            error: { message: dbError.message, code: dbError.code }
+          });
+        } catch (error_) {
+          debugAPI("Failed to send error response:", error_);
+        }
+      }
+      if (streamRequest) {
+        streamRequest.cancel();
+      }
+    });
     
     // EVENT HANDLERS (Database → Excel → HTTP)
     // These async listeners handle the streaming data flow
@@ -143,18 +163,27 @@ export const streamReportExport = async (req, res, next) => {
     // ERROR EVENT: Fired if database streaming fails
     // Could indicate: connection lost, timeout, SQL error, etc.
     streamRequest.on('error', (err) => {
+      if (streamError) return; // Prevent double-handling
+      streamError = true;
       debugAPI("SQL stream error:", err);
       
-      // If headers not yet sent, we can send JSON error response
-      // If streaming already started, can't change status code - just log
-      if (!res.headersSent) {
+      if (res.headersSent) {
+        res.destroy(err); // Abort the in-flight transfer
+      } else {
         const dbError = new DatabaseError('Database error occurred', err);
-        res.status(dbError.status).json({
-          error: {
-            message: dbError.message,
-            code: dbError.code
-          }
-        });
+        try {
+          res.status(dbError.status).json({
+            error: {
+              message: dbError.message,
+              code: dbError.code
+            }
+          });
+        } catch (error_) {
+          debugAPI("Failed to send error response:", error_);
+        }
+      }
+      if (streamRequest) {
+        streamRequest.cancel();
       }
     });
     
@@ -179,15 +208,23 @@ export const streamReportExport = async (req, res, next) => {
         // Close the HTTP response (browser receives complete file)
         res.end();
       } catch (err) {
+        if (streamError) return; // Prevent double-handling
+        streamError = true;
         debugAPI("Error finalizing workbook:", err);
-        if (!res.headersSent) {
+        if (res.headersSent) {
+          res.destroy(err); // Force-close the partially-written response
+        } else {
           const exportError = new ExportError('Failed to generate Excel file');
-          res.status(exportError.status).json({
-            error: {
-              message: exportError.message,
-              code: exportError.code
-            }
-          });
+          try {
+            res.status(exportError.status).json({
+              error: {
+                message: exportError.message,
+                code: exportError.code
+              }
+            });
+          } catch (error_) {
+            debugAPI("Failed to send error response:", error_);
+          }
         }
       }
     });
