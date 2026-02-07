@@ -1,0 +1,11 @@
+{
+    "name": "excel-export-streaming-application-api",
+    "private": true,
+    "type": "module",
+    "dependencies": {
+        "dotenv": "^17.2.4",
+        "exceljs": "^4.4.0",
+        "express": "^5.2.1",
+        "mssql": "^12.2.0"
+    }
+}

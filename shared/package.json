@@ -1,0 +1,15 @@
+{
+    "name": "excel-export-streaming-shared",
+    "private": true,
+    "type": "module",
+    "exports": {
+        "./debug": "./src/debug.js",
+        "./memory": "./src/memory.js"
+    },
+    "files": [
+        "src"
+    ],
+    "dependencies": {
+        "debug": "~4.4.3"
+    }
+}

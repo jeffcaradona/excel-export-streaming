@@ -137,3 +137,13 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# SQL Server Database Projects
+*.sqlproj.user
+[Bb]in/
+[Oo]bj/
+*.dacpac
+*.jfm
+*.dbmdl
+*.refactorlog
+*.sqlprojGenerated
