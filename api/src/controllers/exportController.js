@@ -1,96 +1,171 @@
 import process from 'node:process';
 import ExcelJS from 'exceljs';
+import mssql from 'mssql';
 import { debugApplication } from '../../../shared/src/debug.js';
 import { createMemoryLogger } from '../../../shared/src/memory.js';
 import { getConnectionPool } from '../services/mssql.js';
 import { generateTimestampedFilename } from '../utils/filename.js';
 import { REPORT_COLUMNS, mapRowToExcel } from '../utils/columnMapper.js';
-import mssql from 'mssql';
+import { DEFAULT_ROW_COUNT, validateRowCount } from '../config/export.js';
 
 /**
- * Handles the streaming Excel export
- * Streams data from MSSQL through ExcelJS directly to the HTTP response.
- * No data is buffered in memory - rows are processed one at a time.
+ * STREAMING EXPORT CONTROLLER
  * 
- * @param {import('express').Request} req - Express request object
- * @param {import('express').Response} res - Express response object
- * @param {import('express').NextFunction} next - Express next function
+ * This module provides two different approaches to Excel export:
+ * 1. streamReportExport() - Memory-efficient streaming (RECOMMENDED)
+ * 2. bufferReportExport() - Buffered export loads all data into memory (for comparison)
+ * 
+ * KEY DIFFERENCES:
+ * - Streaming: Rows are piped directly from MSSQL → ExcelJS → HTTP response
+ *   - Low memory footprint (constant throughout)
+ *   - Suitable for large exports (30k+ rows)
+ *   - No intermediate buffering
+ * 
+ * - Buffered: All data loaded into memory → written to Excel workbook → sent as buffer
+ *   - High memory footprint (grows with row count)
+ *   - Suitable for small/medium exports
+ *   - Useful for testing memory limits
+ */
+
+/**
+ * STREAMING EXCEL EXPORT
+ * 
+ * Memory-efficient export that streams rows from database directly to the browser.
+ * No data is buffered in memory - each row is processed and written immediately.
+ * 
+ * Query Parameters:
+ *   - rowCount: Number of rows to export (default: 30000, max: 1000000)
+ *     Example: GET /export/report?rowCount=50000
+ * 
+ * Memory Profile:
+ *   - Constant memory usage regardless of row count
+ *   - Peak memory typically < 50MB for large exports
+ *   - Suitable for 30k+ rows without risk of OOM
+ * 
+ * Flow:
+ *   1. Validate row count from query parameter
+ *   2. Set HTTP response headers (Excel file download)
+ *   3. Create ExcelJS streaming workbook (writes directly to response stream)
+ *   4. Connect to MSSQL and execute stored procedure in streaming mode
+ *   5. For each row from database:
+ *      - Map database columns to Excel format
+ *      - Write to worksheet and commit immediately
+ *      - Track row count and memory usage
+ *   6. When all rows received, finalize workbook and close response
+ *   7. Log peak memory usage and performance metrics
+ * 
+ * Error Handling:
+ *   - Database stream errors: Log and attempt to send error response if headers not sent
+ *   - Client disconnect: Cancel database request and cleanup
+ *   - Workbook finalization errors: Attempt error response, otherwise stream fails gracefully
+ * 
+ * @param {import('express').Request} req - Express request object (query.rowCount optional)
+ * @param {import('express').Response} res - Express response object (file download)
+ * @param {import('express').NextFunction} next - Express error handler function
  */
 export const streamReportExport = async (req, res, next) => {
+  // INITIALIZATION
+  // Track performance metrics and memory usage throughout the export
   const startTime = Date.now();
   const memoryLogger = createMemoryLogger(process, debugApplication);
   let rowCount = 0;
   let streamRequest = null;
   
+  // Get and validate row count from query parameter
+  // validateRowCount() ensures value is between MIN_ROW_COUNT and MAX_ROW_COUNT
+  const requestedRows = validateRowCount(req.query.rowCount || DEFAULT_ROW_COUNT);
+  
   try {
-    debugApplication('Starting Excel export');
-    memoryLogger('Export'); // Log initial memory
+    // LOG: Initial state
+    debugApplication(`Starting streaming Excel export (${requestedRows} rows requested)`);
+    memoryLogger('Export'); // Log initial memory baseline
     
-    // Set response headers for file download
+    // RESPONSE SETUP
+    // Configure HTTP response to trigger browser download
+    // Content-Disposition header tells browser to save as file, not display
     const filename = generateTimestampedFilename();
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     
-    // Create ExcelJS streaming workbook writer
+    // EXCEL WORKBOOK SETUP (STREAMING)
+    // ExcelJS WorkbookWriter streams directly to res (HTTP response)
+    // This is the key to memory efficiency - data never fully buffered in memory
+    // useStyles/useSharedStrings set to false for minimal memory overhead
     const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
-      stream: res,
-      useStyles: false,
-      useSharedStrings: false
+      stream: res,                    // Write directly to HTTP response stream
+      useStyles: false,               // Skip Excel styles to reduce memory
+      useSharedStrings: false         // Disable shared strings for streaming
     });
     
     const worksheet = workbook.addWorksheet('Report');
-    worksheet.columns = REPORT_COLUMNS;
+    worksheet.columns = REPORT_COLUMNS; // Define columns from schema
     
-    // Get database connection and create streaming request
+    // DATABASE CONNECTION
+    // Get connection from pool and enable streaming mode
     const pool = await getConnectionPool();
     streamRequest = pool.request();
-    streamRequest.stream = true; // Enable streaming mode
+    streamRequest.stream = true; // Enable streaming - events emitted per row instead of loadAll
     
-    debugApplication('Executing stored procedure in streaming mode');
+    // LOG: Database execution
+    debugApplication(`Executing stored procedure in streaming mode with ${requestedRows} rows`);
     
-    streamRequest.input("RowCount", mssql.Int, 500000); // Example input parameter, adjust as needed
-    // Execute stored procedure
+    // STORED PROCEDURE EXECUTION
+    // Execute with row count parameter
+    // In streaming mode, this emits 'row' events as data flows from MSSQL
+    streamRequest.input("RowCount", mssql.Int, requestedRows);
     streamRequest.execute('spGenerateData');
     
-    // Handle row events - write each row to Excel as it arrives
+    // EVENT HANDLERS (Database → Excel → HTTP)
+    // These async listeners handle the streaming data flow
+    
+    // ROW EVENT: Fired for each row returned from database
+    // This is where data flows from MSSQL → ExcelJS → HTTP response
     streamRequest.on('row', (row) => {
       rowCount++;
       
-      // Add row to worksheet and commit immediately
+      // Map database columns to Excel row format and write immediately
+      // .commit() writes the row to the underlying stream without buffering
       worksheet.addRow(mapRowToExcel(row)).commit();
       
-      // Log memory periodically (every 5000 rows)
+      // MEMORY TRACKING: Log memory usage periodically
+      // Every 5000 rows, check memory to detect potential issues
       if (rowCount % 5000 === 0) {
         memoryLogger(`Export - ${rowCount} rows`);
         debugApplication(`Processed ${rowCount} rows`);
       }
     });
     
-    // Handle errors from the database stream
+    // ERROR EVENT: Fired if database streaming fails
+    // Could indicate: connection lost, timeout, SQL error, etc.
     streamRequest.on('error', (err) => {
       debugApplication('SQL stream error:', err);
       
-      // If headers haven't been sent yet, we can send an error response
+      // If headers not yet sent, we can send JSON error response
+      // If streaming already started, can't change status code - just log
       if (!res.headersSent) {
         res.status(500).json({ error: 'Database error occurred' });
       }
-      // Otherwise, stream is already in progress - just log and let it fail
     });
     
-    // Handle completion
+    // DONE EVENT: Fired when all rows are sent and database stream closes
+    // This is where we finalize the Excel file
     streamRequest.on('done', async () => {
       try {
         debugApplication(`SQL stream complete. Total rows: ${rowCount}`);
         
-        // Finalize the workbook
+        // WORKBOOK FINALIZATION
+        // These calls close the Excel stream and ensure all data is flushed
+        // They must complete before we can end the HTTP response
         await worksheet.commit();
         await workbook.commit();
         
+        // LOGGING & METRICS
         const duration = Date.now() - startTime;
         debugApplication(`Export complete: ${rowCount} rows in ${duration}ms`);
-        memoryLogger('Export - Complete'); // Final memory log
-        memoryLogger.logPeakSummary('Export - Peak'); // Log peak memory usage
+        memoryLogger('Export - Complete'); // Final current memory snapshot
+        memoryLogger.logPeakSummary('Export - Peak'); // Peak memory during entire operation
         
+        // Close the HTTP response (browser receives complete file)
         res.end();
       } catch (err) {
         debugApplication('Error finalizing workbook:', err);
@@ -100,13 +175,15 @@ export const streamReportExport = async (req, res, next) => {
       }
     });
     
-    // Handle client disconnect
+    // CLIENT DISCONNECT HANDLING
+    // If browser closes connection mid-stream, clean up database request
+    // This prevents orphaned database queries consuming resources
     req.on('close', () => {
       if (!res.writableEnded) {
         debugApplication(`Client disconnected after ${rowCount} rows`);
         memoryLogger.logPeakSummary('Export - Peak (Disconnected)');
         
-        // Cancel the database request if still active
+        // Cancel the database request if it's still active
         if (streamRequest) {
           streamRequest.cancel();
         }
@@ -114,7 +191,146 @@ export const streamReportExport = async (req, res, next) => {
     });
     
   } catch (err) {
+    // INITIALIZATION ERRORS
+    // Errors setting up the export (before streaming starts)
     debugApplication('Error setting up export stream:', err);
-    next(err); // Pass to Express error handler
+    next(err); // Pass to Express global error handler
   }
 };
+
+/**
+ * BUFFERED EXCEL EXPORT (NON-STREAMING)
+ * 
+ * Full-memory export that loads all data before creating Excel file.
+ * WARNING: High memory usage - only suitable for small/medium datasets.
+ * 
+ * Query Parameters:
+ *   - rowCount: Number of rows to export (default: 30000, max: 1000000)
+ *     Example: GET /export/report-buffered?rowCount=50000
+ * 
+ * Memory Profile:
+ *   - Peak memory grows with row count
+ *   - Approximately 2-5KB per row in memory
+ *   - 100k rows ≈ 200-500MB
+ *   - 500k rows ≈ 1-2.5GB (likely OOM)
+ *   - NOT suitable for large exports
+ * 
+ * Flow:
+ *   1. Validate row count from query parameter
+ *   2. Connect to MSSQL and execute stored procedure
+ *   3. WAIT for ALL rows to be returned and buffered in memory
+ *   4. Log memory after data loaded
+ *   5. Create ExcelJS non-streaming workbook
+ *   6. Write all rows to worksheet at once
+ *   7. Generate entire Excel file into memory buffer
+ *   8. Send buffer to browser as file download
+ *   9. Log peak memory usage
+ * 
+ * Use Cases:
+ *   - Testing memory impact of buffering approach
+ *   - Comparing with streaming performance
+ *   - Small exports (< 10k rows) where latency doesn't matter
+ *   - Debugging column/format issues
+ * 
+ * @param {import('express').Request} req - Express request object (query.rowCount optional)
+ * @param {import('express').Response} res - Express response object (file download)
+ * @param {import('express').NextFunction} next - Express error handler function
+ */
+export const bufferReportExport = async (req, res, next) => {
+  // INITIALIZATION
+  const startTime = Date.now();
+  const memoryLogger = createMemoryLogger(process, debugApplication);
+
+  // Get and validate row count from query parameter
+  const requestedRows = validateRowCount(req.query.rowCount || DEFAULT_ROW_COUNT);
+
+  try {
+    // LOG: Initial state
+    debugApplication(`Starting non-streaming Excel export (${requestedRows} rows requested)`);
+    memoryLogger("Export - Start"); // Log initial memory
+
+    // DATABASE CONNECTION & EXECUTION
+    // Non-streaming: execute() returns all results at once (no events)
+    // ENTIRE RESULT SET is loaded into memory before function returns
+    const pool = await getConnectionPool();
+    const request = pool.request();
+
+    debugApplication(
+      `Executing stored procedure (loading ${requestedRows} rows into memory)`,
+    );
+
+    request.input("RowCount", mssql.Int, requestedRows);
+    const result = await request.execute("spGenerateData");
+
+    // DATA EXTRACTION FROM RESULT
+    // result.recordset contains ALL rows returned by stored procedure
+    // This array exists entirely in Node.js process memory
+    const rows = result.recordset;
+    const rowCount = rows.length;
+
+    // MEMORY CHECKPOINT
+    debugApplication(`Loaded ${rowCount} rows into memory`);
+    memoryLogger("Export - Data Loaded"); // Snapshot after data buffered
+
+    // RESPONSE SETUP
+    // Configure HTTP response headers for file download
+    const filename = generateTimestampedFilename("report-buffered");
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    // EXCEL WORKBOOK SETUP (NON-STREAMING)
+    // ExcelJS Workbook (not WorkbookWriter) - loads entire workbook in memory
+    // All rows added to memory, then entire file generated to buffer
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Report");
+    worksheet.columns = REPORT_COLUMNS;
+
+    debugApplication("Writing rows to Excel workbook");
+
+    // WRITE ALL ROWS TO WORKBOOK IN MEMORY
+    // This loop adds each database row to the Excel worksheet
+    // All rows and worksheet data exist in Node.js memory at this point
+    for (let i = 0; i < rows.length; i++) {
+      worksheet.addRow(mapRowToExcel(rows[i]));
+
+      // MEMORY TRACKING: Log memory periodically during write
+      if ((i + 1) % 5000 === 0) {
+        memoryLogger(`Export - ${i + 1} rows written`);
+        debugApplication(`Written ${i + 1} rows to workbook`);
+      }
+    }
+
+    // MEMORY CHECKPOINT
+    memoryLogger("Export - Rows Written"); // Snapshot after all rows added
+
+    debugApplication("Generating Excel file buffer");
+
+    // GENERATE EXCEL FILE BUFFER
+    // This creates the complete .xlsx file in memory as a Buffer
+    // Includes all rows + column definitions + metadata
+    // The largest memory spike occurs here
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    // MEMORY CHECKPOINT
+    memoryLogger("Export - Buffer Generated"); // Snapshot after file buffer created
+
+    // FINAL METRICS
+    const duration = Date.now() - startTime;
+    debugApplication(`Export complete: ${rowCount} rows in ${duration}ms`);
+    memoryLogger.logPeakSummary("Export - Peak"); // Peak memory across entire operation
+
+    // SEND FILE TO BROWSER
+    // Send the buffer as express response
+    // Browser receives complete file and saves it
+    res.send(buffer);
+  } catch (err) {
+    // ERROR HANDLING
+    debugApplication("Error during non-streaming export:", err);
+    next(err); // Pass to Express global error handler
+  }
+};
+
+

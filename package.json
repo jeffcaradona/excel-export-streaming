@@ -15,7 +15,9 @@
     },
     "scripts": {
         "lint": "eslint .",
-        "lint:fix": "eslint . --fix"
+        "lint:fix": "eslint . --fix",
+        "dev:api": "npm run dev --workspace=api",
+        "dev:api:limited": "npm run dev:limited --workspace=api"
     },
     "devDependencies": {
         "@eslint/js": "^10.0.1",
