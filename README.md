@@ -278,11 +278,9 @@ Contributions welcome! Areas of interest:
 
 MIT
 
-## Acknowledgments
 
-Built to demonstrate memory-efficient streaming patterns in Node.js for real-world production scenarios.
 
-**Key Insight:** Data should flow, not accumulate.
+
 
 ---
 
