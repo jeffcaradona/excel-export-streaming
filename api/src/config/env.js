@@ -18,7 +18,7 @@ const envSchema = z.object({
   DB_PORT: z.coerce.number().int().positive().default(1433),
   
   // API configuration with defaults
-  API_PORT: z.coerce.number().int().positive().default(3000),
+  API_PORT: z.coerce.number().int().positive().default(3001),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   
   // Optional settings

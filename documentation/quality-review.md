@@ -2,8 +2,21 @@
 
 > **Date:** February 7, 2026  
 > **Scope:** Full codebase review for bad programming practices  
-> **Last Updated:** February 7, 2026 (Sprint 1 Complete)  
+> **Last Updated:** February 7, 2026 (Sprint 2 Review)  
 > **Exclusion:** Buffered export endpoint intentionally loads all data into memory for demo/comparison — not a bug
+
+---
+
+## Sprint 2 Summary
+
+**Status:** ✅ Review Complete  
+**New Features Added:** JWT inter-service authentication, BFF proxy layer, Zod environment validation, Helmet security headers, CORS, comprehensive test infrastructure  
+**Version Update:** `0.1.0` → `0.2.0` (authentication + BFF)  
+**New Issues Found:** #17, #18, #19  
+**Test Coverage:** 44 tests ✅ PASSING (unit + smoke + integration + JWT auth)  
+**Lint Status:** 0 errors ✅
+
+**Remaining Issues:** 16 (1 HIGH, 5 MEDIUM, 10 LOW) — scheduled for future sprints
 
 ---
 
@@ -15,8 +28,6 @@
 **Changes:** 4 interconnected fixes in [exportController.js](../../api/src/controllers/exportController.js) for error handling, response cleanup, and stream management  
 **Test Coverage:** 10 unit tests + 3 smoke tests + 6 integration tests ✅ PASSING  
 **Lint Status:** 0 errors ✅
-
-**Remaining Issues:** 13 (5 MEDIUM, 8 LOW) — scheduled for future sprints
 
 ---
 
@@ -43,14 +54,17 @@
 | 6 | Shutdown timer never cleared | Event Loop | MEDIUM | ⏳ PLANNED | mssql.js |
 | 7 | No error handler on `res` stream | Stream Issue | MEDIUM | ⏳ PLANNED | exportController.js |
 | 8 | `res.end()` instead of `res.destroy()` on proxy error | Stream Issue | MEDIUM | ⏳ PLANNED | exportProxy.js |
-| 9 | Event handlers attached after `listen()` | Error / Race | LOW | ⏳ PLANNED | server.js (api) |
+| 9 | Event handlers attached after `listen()` | Error / Race | MEDIUM | ⏳ PLANNED | server.js (api + app) |
 | 10 | Dead `setImmediate` before `process.exit` | Dead Code | LOW | ⏳ PLANNED | server.js (api) |
 | 11 | `process.memoryUsage()` in hot path | Event Loop | LOW | ⏳ PLANNED | exportController.js |
 | 12 | Polymorphic error objects (conditional spread) | Deopt | LOW | ⏳ PLANNED | api.js / app.js |
 | 13 | Inconsistent error class shapes | Deopt | LOW | ⏳ PLANNED | errors.js (api) |
-| 14 | `parseInt` without radix | Best Practice | LOW | ⏳ PLANNED | stress-test*.js |
+| 14 | `Number.parseInt` without radix | Best Practice | LOW | ⏳ PLANNED | stress-test*.js |
 | 15 | `isPoolHealthy` dead code | Dead Code | LOW | ⏳ PLANNED | mssql.js |
 | 16 | `util._extend` deprecation in http-proxy | Third-party Dep | LOW | ⏳ PLANNED | http-proxy@1.18.1 |
+| 17 | Stress tests bypass JWT authentication | Test Gap | MEDIUM | ⏳ PLANNED | stress-test*.js |
+| 18 | `DatabaseMock.wrapAsDbError()` wrong constructor args | Test Quality | LOW | ⏳ PLANNED | database.mock.js |
+| 19 | Debug message typo `"failre"` | Best Practice | LOW | ⏳ PLANNED | mssql.js |
 
 ---
 
@@ -318,9 +332,11 @@ if (res.headersSent) {
 
 ### 9. `onError` Handler Attached After `server.listen()` — Race Condition
 
-**File:** [api/src/server.js](api/src/server.js) ~line 44-51  
-**Category:** Error Handling / Race
+**File:** [api/src/server.js](api/src/server.js) ~line 44-51 and [app/src/server.js](app/src/server.js) ~line 36-38  
+**Category:** Error Handling / Race  
+**Severity:** MEDIUM (upgraded — now applies to both servers)
 
+**API server.js:**
 ```javascript
 try {
   await initializeDatabase();
@@ -330,9 +346,16 @@ server.on("error", onError);   // ← attached AFTER listen()
 server.on("listening", onListening);
 ```
 
-**Problem:** `server.listen()` is asynchronous. If the port bind fails extremely fast (before handlers are attached), the `error` event fires with no listener. Works in practice because `listen` always defers past the current tick — but fragile and ordering-dependent.
+**BFF server.js:**
+```javascript
+server.listen(port);
+server.on('error', onError);       // ← attached AFTER listen()
+server.on('listening', onListening);
+```
 
-**Fix:** Attach handlers *before* `listen()`:
+**Problem:** `server.listen()` is asynchronous. If the port bind fails extremely fast (before handlers are attached), the `error` event fires with no listener. Works in practice because `listen` always defers past the current tick — but fragile and ordering-dependent. Now affects **both** the API and BFF servers.
+
+**Fix:** Attach handlers *before* `listen()` in both files:
 ```javascript
 server.on("error", onError);
 server.on("listening", onListening);
@@ -432,16 +455,16 @@ export class DatabaseError extends AppError {
 
 ---
 
-### 14. `parseInt` Without Radix in Stress Tests
+### 14. `Number.parseInt` Without Radix in Stress Tests
 
-**File:** stress-test.js and stress-test-buffered.js ~line 9  
+**File:** stress-test.js and stress-test-buffered.js ~line 10  
 **Category:** Best Practice
 
 ```javascript
-parseInt(args[index + 1])  // missing radix
+Number.parseInt(args[index + 1])  // missing radix
 ```
 
-**Fix:** `parseInt(args[index + 1], 10)`
+**Fix:** `Number.parseInt(args[index + 1], 10)`
 
 ---
 
@@ -500,13 +523,133 @@ mergedOptions = extend({}, options);
 
 ---
 
-## Recommended Fix Order
+## NEW ISSUES (Sprint 2 Review)
 
-1. ✅ **Issues #1-3** (exportController.js) — COMPLETE (Sprint 1)
-2. ⏳ **Issues #4-8** (exportController.js, mssql.js, exportProxy.js) — PLANNED (Sprint 2)
-3. ⏳ **Issue #16** (http-proxy@1.18.1) — PLANNED (patch-package)
-4. ⏳ **Issues #9-15** — PLANNED (cleanup, deopt, best practices)
+### 17. Stress Tests Bypass JWT Authentication — Test Gap
+
+**File:** [stress-test.js](../../stress-test.js) ~line 28 and [stress-test-buffered.js](../../stress-test-buffered.js) ~line 29  
+**Category:** Test Gap  
+**Severity:** MEDIUM
+
+```javascript
+const result = await autocannon({
+  url: `http://localhost:3001/export/report?rowCount=${rowCount}`,
+  connections,
+  // ...
+});
+```
+
+**Problem:** JWT authentication was added to all API export routes in Sprint 2 (`router.use(jwtAuthMiddleware(...))`). The stress tests hit port 3001 (API directly) without including a JWT `Authorization` header. Every request now receives a `401 Unauthorized` response, meaning the stress tests **no longer test actual export functionality** — they only stress-test the JWT rejection path.
+
+**Fix:**
+```javascript
+import { generateToken } from './shared/src/auth/jwt.js';
+
+const token = generateToken(process.env.JWT_SECRET);
+
+const result = await autocannon({
+  url: `http://localhost:3001/export/report?rowCount=${rowCount}`,
+  connections,
+  headers: {
+    Authorization: `Bearer ${token}`
+  },
+  // ...
+});
+```
+
+**Alternative:** Route stress tests through the BFF (port 3000) which handles JWT injection automatically. This is more realistic but adds proxy overhead to measurements.
 
 ---
 
-*Last Updated: February 7, 2026 (Sprint 1 Complete)*
+### 18. `DatabaseMock.wrapAsDbError()` — Incorrect Constructor Arguments
+
+**File:** [api/tests/mocks/database.mock.js](../../api/tests/mocks/database.mock.js) ~line 73-78  
+**Category:** Test Quality  
+**Severity:** LOW
+
+```javascript
+static wrapAsDbError(originalError) {
+  return new DatabaseError(
+    originalError.message || 'Database error',
+    originalError.code || 'DB_ERROR'   // ← string, not Error object
+  );
+}
+```
+
+**Problem:** `DatabaseError` constructor signature is `constructor(message, originalError = null)` — the second parameter expects an Error object. The mock passes `originalError.code || 'DB_ERROR'` (a string), so `this.originalError` becomes the string `'DB_ERROR'` instead of the actual error. This could mask bugs in tests that rely on `originalError` being an Error instance. Additionally, `wrapAsDbError()` is not called by any current tests — it is dead test code.
+
+**Fix:**
+```javascript
+static wrapAsDbError(originalError) {
+  return new DatabaseError(
+    originalError.message || 'Database error',
+    originalError  // Pass the Error object, not a string
+  );
+}
+```
+Or remove the method if unused.
+
+---
+
+### 19. Debug Message Typo in `testBadRecord`
+
+**File:** [api/src/services/mssql.js](../../api/src/services/mssql.js) ~line 222  
+**Category:** Best Practice  
+**Severity:** LOW
+
+```javascript
+debugMSSQL("Initial database failre test passed: %O", {
+```
+
+**Problem:** Typo: `"failre"` should be `"failure"`. Minor cosmetic issue in debug output.
+
+**Fix:**
+```javascript
+debugMSSQL("Initial database failure test passed: %O", {
+```
+
+---
+
+## Sprint 2 — New Code Review Notes
+
+### ✅ Clean Code (No Issues Found)
+
+The following new modules were reviewed and found to have no issues:
+
+| Module | Notes |
+|--------|-------|
+| [shared/src/auth/jwt.js](../../shared/src/auth/jwt.js) | Clean JWT generation/verification. HMAC-SHA256, proper claims (iss, aud, iat, exp). Synchronous `verifyToken` — no Zalgo risk. |
+| [shared/src/middlewares/jwtAuth.js](../../shared/src/middlewares/jwtAuth.js) | Clean middleware factory. Handles all JWT error types (expired, invalid, malformed). Responds directly — intentionally bypasses global error handler for security. |
+| [shared/tests/auth/jwt.test.js](../../shared/tests/auth/jwt.test.js) | 11 tests covering generation, verification, expiry, wrong issuer/audience, malformed tokens, roundtrip. Thorough. |
+| [shared/tests/middlewares/jwtAuth.test.js](../../shared/tests/middlewares/jwtAuth.test.js) | 10 tests covering valid tokens, missing/invalid headers, expired tokens, case sensitivity, multiple requests. Thorough. |
+| [api/src/config/env.js](../../api/src/config/env.js) | Zod schema validation with lazy-cached getter. JWT_SECRET minimum 32 chars enforced. |
+| [app/src/config/env.js](../../app/src/config/env.js) | Mirrors API pattern. Includes JWT_EXPIRES_IN default. Clean. |
+| [api/src/config/export.js](../../api/src/config/export.js) | `Number.parseInt(value, 10)` — correct radix. Clean clamping logic. |
+| [api/src/utils/filename.js](../../api/src/utils/filename.js) | Input sanitization prevents path traversal/injection. Length limits applied. |
+| [api/src/utils/columnMapper.js](../../api/src/utils/columnMapper.js) | Simple static mapping. No issues. |
+| [app/src/utils/errors.js](../../app/src/utils/errors.js) | Consistent error shapes (AppError, ConfigurationError, ProxyError). All via `super()`. |
+| [shared/src/server.js](../../shared/src/server.js) | `normalizePort` uses `Number.parseInt(val, 10)` — correct radix. |
+| [shared/src/debug.js](../../shared/src/debug.js) | Module-scoped debug instances. JSON import with import attributes (Node 22+). Clean. |
+| [shared/src/memory.js](../../shared/src/memory.js) | Peak-tracking memory logger. Functional closure pattern. No leaks (tracks max values only). |
+| [app/src/middlewares/exportProxy.js](../../app/src/middlewares/exportProxy.js) | JWT injection on `proxyReq` event. Module-scoped memoryLogger tracks process-lifetime peaks (intentional). |
+| [app/src/app.js](../../app/src/app.js) | Helmet, CORS, proper middleware ordering. Has existing issue #12 (polymorphic error). |
+| [api/src/routes/export.js](../../api/src/routes/export.js) | JWT middleware applied to all export routes via `router.use()`. Clean. |
+| [app/src/routes/exports.js](../../app/src/routes/exports.js) | Thin route → middleware delegation. Clean. |
+| [api/tests/mocks/response.mock.js](../../api/tests/mocks/response.mock.js) | Comprehensive Express response stub. Clean. |
+| [api/tests/mocks/streamRequest.mock.js](../../api/tests/mocks/streamRequest.mock.js) | EventEmitter-based request mock with static helpers. Clean. |
+
+---
+
+## Recommended Fix Order
+
+1. ✅ **Issues #1-3** (exportController.js) — COMPLETE (Sprint 1)
+2. ⏳ **Issues #4, #7** (exportController.js) — Backpressure + response error handler (streaming stability)
+3. ⏳ **Issues #5, #6** (mssql.js) — Pool error handling + shutdown timer
+4. ⏳ **Issues #8, #9** (exportProxy.js, server.js) — Stream destroy + listen() race condition
+5. ⏳ **Issue #17** (stress-test*.js) — Add JWT headers to stress tests (functional gap)
+6. ⏳ **Issue #16** (http-proxy@1.18.1) — patch-package
+7. ⏳ **Issues #10-15, #18, #19** — Cleanup, deopt, dead code, typos
+
+---
+
+*Last Updated: February 7, 2026 (Sprint 2 Review)*

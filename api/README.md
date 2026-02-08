@@ -31,9 +31,9 @@ DB_NAME=YourDatabaseName
 DB_PORT=1433  # Optional, defaults to 1433
 
 # API Configuration (Optional)
-API_PORT=3000  # Defaults to 3000
+API_PORT=3001  # Defaults to 3001
 NODE_ENV=development  # development|production|test
-CORS_ORIGIN=http://localhost:3000  # Defaults to http://localhost:3000
+CORS_ORIGIN=http://localhost:3001  # Defaults to http://localhost:3001
 ```
 
 All environment variables are validated on startup using Zod schema. Missing required variables will cause the server to exit with a clear error message.
@@ -72,7 +72,7 @@ Health check endpoint to verify the API is running and responsive.
 Streams an Excel file directly from the database. Uses memory-efficient streaming - no data is buffered in memory.
 
 **Query Parameters:**
-- `rowCount` (optional, default: 30000, max: 10000000) - Number of rows to export
+- `rowCount` (optional, default: 30000, max: 1,048,576) - Number of rows to export
 
 **Example Requests:**
 
