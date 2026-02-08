@@ -23,6 +23,9 @@ const envSchema = z.object({
   
   // Optional settings
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
+  
+  // JWT authentication
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
 });
 
 /**

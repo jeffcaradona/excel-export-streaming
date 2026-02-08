@@ -18,6 +18,7 @@ import { createProxyMiddleware } from 'http-proxy-middleware';
 import { debugApplication } from '../../../shared/src/debug.js';
 import { getEnv } from '../config/env.js';
 import { createMemoryLogger } from "../../../shared/src/memory.js";
+import { generateToken } from '../../../shared/src/auth/jwt.js';
 
 const memoryLogger = createMemoryLogger(process, debugApplication);
 
@@ -60,9 +61,13 @@ const exportProxy = createProxyMiddleware({
     },
 
     /**
-     * Log successful proxy forwarding for debugging
+     * Inject JWT token and log successful proxy forwarding
      */
     proxyReq(proxyReq, req) {
+      // Generate fresh JWT token for this request
+      const token = generateToken(env.JWT_SECRET, env.JWT_EXPIRES_IN);
+      proxyReq.setHeader('Authorization', `Bearer ${token}`);
+      
       debugApplication(`Proxy → ${apiTarget}${proxyReq.path} [${req.method}]`);
       memoryLogger('proxy-start');
     },

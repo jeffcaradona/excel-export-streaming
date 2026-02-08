@@ -1,17 +1,20 @@
 {
   "name": "excel-export-streaming-shared",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "exports": {
     "./server": "./src/server.js",
     "./debug": "./src/debug.js",
-    "./memory": "./src/memory.js"
+    "./memory": "./src/memory.js",
+    "./auth": "./src/auth/jwt.js",
+    "./middlewares/jwtAuth": "./src/middlewares/jwtAuth.js"
   },
   "files": [
     "src"
   ],
   "dependencies": {
-    "debug": "~4.4.3"
+    "debug": "~4.4.3",
+    "jsonwebtoken": "^9.0.3"
   }
 }
