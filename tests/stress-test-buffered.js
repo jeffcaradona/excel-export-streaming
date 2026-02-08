@@ -10,7 +10,7 @@ const args = process.argv.slice(2);
 const getArgValue = (argName, defaultValue) => {
   const index = args.indexOf(argName);
   return index !== -1 && args[index + 1]
-    ? Number.parseInt(args[index + 1])
+    ? Number.parseInt(args[index + 1], 10)
     : defaultValue;
 };
 

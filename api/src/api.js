@@ -48,12 +48,12 @@ app.use((err, _req, res, _next) => {
   // Don't expose error details in production
   const isDevelopment = process.env.NODE_ENV === 'development';
   
-  // Build error response
+  // Build error response (monomorphic shape)
   const errorResponse = {
     error: {
       message: isDevelopment ? err.message : 'Internal server error',
       code: err.code || 'INTERNAL_ERROR',
-      ...(isDevelopment && { stack: err.stack })
+      stack: isDevelopment ? err.stack : undefined
     }
   };
   

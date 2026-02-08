@@ -32,10 +32,12 @@ const port = normalizePort(env.APP_PORT || '3000');
 app.set('port', port);
 
 const server = http.createServer(app);
+server.on("error", onError);
+server.on("listening", onListening);
+
 
 server.listen(port);
-server.on('error', onError);
-server.on('listening', onListening);
+
 
 // ── Error handler for listen failures ───────────────────────────────────────
 function onError(error) {

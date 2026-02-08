@@ -3,7 +3,7 @@
  * Provides realistic MSSQL and custom error scenarios
  */
 
-import { DatabaseError, ExportError } from '../../src/utils/errors.js';
+import { ExportError } from '../../src/utils/errors.js';
 
 class DatabaseMock {
   /**
@@ -53,17 +53,7 @@ class DatabaseMock {
     return err;
   }
 
-  /**
-   * Create a DatabaseError wrapper (from errors.js)
-   * @param {Error} originalError - Original database error
-   * @returns {DatabaseError} Wrapped error
-   */
-  static wrapAsDbError(originalError) {
-    return new DatabaseError(
-      originalError.message || 'Database error',
-      originalError.code || 'DB_ERROR'
-    );
-  }
+
 
   /**
    * Create an ExportError (from errors.js)
