@@ -52,7 +52,7 @@ Learn about the three common anti-patterns that cause memory exhaustion:
 
 Understand how streams solve the memory problem:
 - The four stream types (Readable, Writable, Duplex, Transform)
-- Event-driven architecture and backpressure
+- Event-driven architecture and manual backpressure implementation
 - Why HTTP responses are streams
 - ExcelJS WorkbookWriter vs. Workbook
 
@@ -70,8 +70,10 @@ Step-by-step breakdown of the streaming export controller:
 - Database streaming with MSSQL `stream: true`
 - ExcelJS WorkbookWriter piped to HTTP response
 - Event handlers: 'row', 'done', 'error'
+- Manual backpressure implementation (pause/resume)
 - Memory monitoring and client disconnect handling
 - BFF proxy layer design
+- Alternative patterns: Why we don't use `pipeline()`
 
 **Key Insight:** Data flows continuously, never accumulates
 

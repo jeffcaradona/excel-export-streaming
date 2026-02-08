@@ -570,7 +570,160 @@ Peak: 531 MB (11x higher than streaming!)
 | **Proxy passes streams** | BFF doesn't buffer response | E2E streaming |
 | **Memory logging** | Detect issues early | Observability |
 | **Client disconnect handling** | Cancel orphaned queries | Resource efficiency |
-| **No backpressure (yet)** | Simplicity for V1 | Future improvement |
+| **Backpressure via pause/resume** | Prevents memory growth with slow clients | Bounded memory regardless of client speed |
+| **Event-driven over pipeline()** | ExcelJS uses side-effect writes, not Transform streams | Simpler than creating custom Transform wrapper |
+
+## Alternative Patterns: Why Not `pipeline()`?
+
+### The Question
+
+The [official node-mssql documentation](https://github.com/tediousjs/node-mssql?tab=readme-ov-file#streaming) shows two high-level patterns:
+
+```javascript
+// Pattern A: pipeline() with readable stream
+const readableStream = request.toReadableStream({ highWaterMark: 100 });
+pipeline(readableStream, transformStream, writableStream, callback);
+
+// Pattern B: direct pipe
+request.pipe(writableStream);
+```
+
+Both provide **automatic backpressure** and **built-in error propagation**. So why are we using the **event-driven pattern** with manual `pause()`/`resume()` instead?
+
+### The Reality: ExcelJS Doesn't Fit `pipeline()`
+
+**Problem:** ExcelJS's `WorkbookWriter` doesn't accept rows as input. It writes to an underlying stream **as a side effect**:
+
+```javascript
+// ExcelJS's API
+const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res });
+const worksheet = workbook.addWorksheet('Report');
+worksheet.addRow(rowData).commit();  // ← writes to 'res' as side effect, not return value
+```
+
+This doesn't match the Transform stream model, where data flows through:
+```javascript
+readable.pipe(transform).pipe(writable);  // Data flows through transform
+```
+
+### What `pipeline()` Would Require
+
+To use `pipeline()`, we'd need a custom Transform stream wrapper:
+
+```javascript
+class ExcelTransformStream extends Transform {
+  constructor(worksheet) {
+    super({ objectMode: true });
+    this.worksheet = worksheet;
+  }
+  
+  _transform(row, encoding, callback) {
+    // Problem 1: worksheet.commit() returns a Promise, but Transform
+    // streams expect synchronous callback() invocation
+    this.worksheet.addRow(mapRowToExcel(row)).commit()
+      .then(() => callback())
+      .catch(callback);
+  }
+  
+  _flush(callback) {
+    // Problem 2: Workbook finalization still needs manual handling
+    this.workbook.commit()
+      .then(() => callback())
+      .catch(callback);
+  }
+}
+
+const excelStream = new ExcelTransformStream(worksheet);
+pipeline(request.toReadableStream(), excelStream, res, (err) => {
+  // handle errors
+});
+request.query('EXEC spGenerateData @RowCount');
+```
+
+**Trade-offs:**
+- ✅ Automatic backpressure (nice!)
+- ✅ Built-in error propagation
+- ❌ 30+ lines of Transform stream boilerplate
+- ❌ Complex async handling in `_transform()` (Promise → callback bridge)
+- ❌ Workbook finalization logic split across class methods
+- ❌ Less clear error handling (pipeline errors + workbook errors)
+- ❌ **More complexity, not less**
+
+### Our Choice: Event-Driven + Manual Backpressure
+
+**Implementation:**
+```javascript
+request.on('row', (row) => {
+  worksheet.addRow(mapRowToExcel(row)).commit();
+  
+  // Manual backpressure: pause when HTTP buffer is full
+  if (res.writableLength > res.writableHighWaterMark) {
+    request.pause();
+    res.once('drain', () => request.resume());
+  }
+});
+
+request.on('done', async () => {
+  await worksheet.commit();
+  await workbook.commit();
+  res.end();
+});
+```
+
+**Why this is better for our use case:**
+- ✅ Works directly with ExcelJS's existing API (no wrapper)
+- ✅ Clear, linear control flow
+- ✅ 4 extra lines for backpressure vs. 30+ for Transform stream
+- ✅ Explicit error handling at each step
+- ✅ Uses same backpressure mechanism `pipeline()` uses internally
+
+### Byte-Level vs. Row-Count Backpressure
+
+The official docs also show row-count batching:
+
+```javascript
+// Official docs example
+let rowsToProcess = [];
+request.on('row', row => {
+  rowsToProcess.push(row);
+  if (rowsToProcess.length >= 15) {  // ← arbitrary threshold
+    request.pause();
+    processRows();
+  }
+});
+```
+
+**Our byte-level approach is better for HTTP streaming:**
+
+| Aspect | Row-Count Batching | Byte-Level (Ours) |
+|--------|-------------------|-------------------|
+| **Trigger** | Fixed row count (why 15?) | Actual HTTP buffer fullness |
+| **Metric** | Rows in memory | Bytes in `res` stream |
+| **Network awareness** | No - pauses at fixed intervals | Yes - responds to client speed |
+| **Memory** | Buffers N rows before processing | No buffering - checks each write |
+| **Fast client** | Still pauses every 15 rows | Never pauses - exports at full speed |
+| **Slow client (3G)** | Might still overflow buffer | Pauses frequently - memory bounded |
+
+**Key insight:** Our approach adapts to actual network conditions using Node.js's built-in stream backpressure signals (`writableLength`/`writableHighWaterMark`/`drain`).
+
+### When to Use Each Pattern
+
+**Use `pipeline()` / `toReadableStream()` when:**
+- ✅ Piping raw data (no transformation) or simple transforms
+- ✅ Destination accepts data via standard Writable stream
+- ✅ Transformation fits Transform stream model (data in → data out)
+- ✅ Example: `SELECT * FROM users` → pipe to JSON HTTP response
+
+**Use event-driven pattern when:**
+- ✅ Library uses side-effect writes (like ExcelJS)
+- ✅ Need row-by-row processing with async operations
+- ✅ Precise control over cleanup order (database → transform → HTTP)
+- ✅ Multiple event sources need coordination (DB + HTTP close + errors)
+- ✅ Example: `SELECT * FROM orders` → transform via ExcelJS → stream to HTTP
+
+**Rule of thumb:** If you're thinking "I need to create a custom Transform stream to use `pipeline()`" — the event-driven pattern is probably simpler.
+
+---
 
 ## Summary
 
@@ -580,8 +733,9 @@ The streaming architecture achieves constant memory by:
 2. **Streaming at every layer** - Database → Excel → HTTP → Browser
 3. **Event-driven processing** - React to data arrival, don't wait for completion
 4. **Direct stream piping** - ExcelJS writes to HTTP response, no intermediate buffer
+5. **Manual backpressure** - Pauses database when HTTP buffer fills, resumes when drained
 
-**Result:** 1 million rows use the same memory as 10,000 rows (~80 MB).
+**Result:** 1 million rows use the same memory as 10,000 rows (~80 MB), regardless of client network speed.
 
 ---
 
