@@ -236,7 +236,7 @@ This architecture is ideal for:
 
 ## Technology Stack
 
-- **Runtime:** Node.js 20+
+- **Runtime:** Node.js 22+
 - **Framework:** Express.js
 - **Database:** MSSQL Server (pattern applies to PostgreSQL, MySQL, MongoDB)
 - **Excel Generation:** ExcelJS (streaming mode)

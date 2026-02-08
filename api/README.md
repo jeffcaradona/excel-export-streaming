@@ -117,11 +117,7 @@ Authorization: Bearer <jwt-token>
 **Query Parameters:**
 - `rowCount` (optional, default: 30000, max: 1,048,576) - Number of rows to export
 
-**Memory Profile:**
-- 10k rows ≈ 20-50MB
-- 50k rows ≈ 100-250MB
-- 100k rows ≈ 200-500MB
-- 500k rows ≈ 1-2.5GB (likely OOM)
+**Memory Profile:** See [Performance Analysis](../documentation/tutorial/04-why-streaming-wins.md#memory-efficiency-the-critical-difference) for detailed benchmarks.
 
 ## Error Handling
 
