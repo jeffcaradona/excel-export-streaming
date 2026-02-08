@@ -24,11 +24,12 @@ Traditional Excel export approaches load entire datasets into memory, causing:
 # Install dependencies
 npm install
 
-# Start API service (port 3001)
-cd api && npm run dev
+# Start both services (API on port 3001, BFF on port 3000)
+npm run dev
 
-# Start BFF service (port 3000)
-cd app && npm run dev
+# Or start individually:
+# npm run dev:api  # API only
+# npm run dev:app  # BFF only
 
 # Test export
 curl "http://localhost:3000/exports/report?rowCount=10000" -o test.xlsx
@@ -147,6 +148,8 @@ excel-export-streaming/
 
 ## API Endpoints
 
+**Note:** Export endpoints require JWT authentication when called directly on API (port 3001). The BFF (port 3000) handles authentication automatically.
+
 ### GET `/exports/report?rowCount=<number>`
 
 Streaming Excel export (recommended)
@@ -165,11 +168,25 @@ Buffered Excel export (for comparison)
 
 ### GET `/health`
 
-Health check endpoint
+Health check endpoint (no authentication required)
 
 ## Configuration
 
-Create `.env` file:
+### Quick Reference
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `DB_USER` | - | ✅ | Database username |
+| `DB_PASSWORD` | - | ✅ | Database password |
+| `DB_HOST` | - | ✅ | Database host |
+| `DB_NAME` | - | ✅ | Database name |
+| `DB_PORT` | `1433` | - | Database port |
+| `API_PORT` | `3001` | - | API service port |
+| `APP_PORT` | `3000` | - | BFF service port |
+| `NODE_ENV` | `development` | - | Environment mode |
+| `JWT_SECRET` | - | ✅ | JWT signing secret (min 32 chars) |
+
+### Example `.env` File
 
 ```env
 # Database (Required)
@@ -177,12 +194,15 @@ DB_USER=sa
 DB_PASSWORD=YourPassword
 DB_HOST=localhost
 DB_NAME=YourDatabase
-DB_PORT=1433
 
-# Services (Optional)
+# Optional (shown with defaults)
+DB_PORT=1433
 API_PORT=3001
 APP_PORT=3000
 NODE_ENV=development
+
+# JWT Authentication (Required)
+JWT_SECRET=your-secret-key-at-least-32-characters-long
 ```
 
 See [api/README.md](api/README.md) for complete configuration details.
