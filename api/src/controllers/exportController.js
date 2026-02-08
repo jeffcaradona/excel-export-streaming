@@ -104,6 +104,20 @@ export const streamReportExport = async (req, res, next) => {
     const worksheet = workbook.addWorksheet('Report');
     worksheet.columns = REPORT_COLUMNS; // Define columns from schema
     
+    // RESPONSE STREAM ERROR HANDLER
+    // If the client disconnects and a write is attempted before the close
+    // event fires, res emits an error (ERR_STREAM_WRITE_AFTER_END or
+    // ERR_STREAM_DESTROYED). Without this handler, the error becomes an
+    // uncaught exception and crashes the process.
+    res.on('error', (err) => {
+      if (streamError) return;
+      streamError = true;
+      debugAPI("Response stream error:", err);
+      if (streamRequest) {
+        streamRequest.cancel();
+      }
+    });
+    
     // DATABASE CONNECTION
     // Get connection from pool and enable streaming mode
     const pool = await getConnectionPool();
@@ -151,6 +165,14 @@ export const streamReportExport = async (req, res, next) => {
       // Map database columns to Excel row format and write immediately
       // .commit() writes the row to the underlying stream without buffering
       worksheet.addRow(mapRowToExcel(row)).commit();
+      
+      // BACKPRESSURE: If the response stream buffer is full, pause the
+      // database stream until the client catches up. Without this, a slow
+      // client causes unbounded memory growth as rows pile up in the buffer.
+      if (res.writableLength > res.writableHighWaterMark) {
+        streamRequest.pause();
+        res.once('drain', () => streamRequest.resume());
+      }
       
       // MEMORY TRACKING: Log memory usage periodically
       // Every 5000 rows, check memory to detect potential issues
