@@ -222,8 +222,6 @@ This project has been tested with real-world stress tests. Below are actual test
 
 See [Why Streaming Wins](tutorial/04-why-streaming-wins.md) for detailed memory and scaling analysis.
 
-## Example Test Output (1M Row Export)
-
 ## Advanced: Custom Test Scenarios
 
 Create a new test file for specialized scenarios:
