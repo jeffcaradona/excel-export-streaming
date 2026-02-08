@@ -32,7 +32,7 @@ npm run stress-test:heavy
 
 ### Custom Configuration
 ```bash
-node stress-test.js --connections 25 --duration 45 --rowCount 524288
+node tests/stress-test.js --connections 25 --duration 45 --rowCount 524288
 ```
 
 **Parameters:**
@@ -55,19 +55,19 @@ The stress test provides key metrics:
 
 ### 1. Baseline Performance (Single User)
 ```bash
-node stress-test.js --connections 1 --duration 30 --rowCount 1048576
+node tests/stress-test.js --connections 1 --duration 30 --rowCount 1048576
 ```
 Establishes baseline performance metrics with no concurrency.
 
 ### 2. Normal Load
 ```bash
-node stress-test.js --connections 10 --duration 60 --rowCount 1048576
+node tests/stress-test.js --connections 10 --duration 60 --rowCount 1048576
 ```
 Simulates 10 simultaneous users pulling large exports.
 
 ### 3. Peak Load
 ```bash
-node stress-test.js --connections 50 --duration 60 --rowCount 1048576
+node tests/stress-test.js --connections 50 --duration 60 --rowCount 1048576
 ```
 Simulates peak usage with 50 concurrent users.
 
@@ -79,7 +79,7 @@ Tests system stability over an extended period (60 seconds, 50 connections).
 
 ### 5. Small Dataset
 ```bash
-node stress-test.js --connections 20 --duration 30 --rowCount 102400
+node tests/stress-test.js --connections 20 --duration 30 --rowCount 102400
 ```
 Tests performance with smaller exports (100K rows).
 
@@ -221,8 +221,6 @@ This project has been tested with real-world stress tests. Below are actual test
 5. **At scale** (50+ concurrent users), buffering fails entirely due to memory exhaustion
 
 See [Why Streaming Wins](tutorial/04-why-streaming-wins.md) for detailed memory and scaling analysis.
-
-## Example Test Output (1M Row Export)
 
 ## Advanced: Custom Test Scenarios
 

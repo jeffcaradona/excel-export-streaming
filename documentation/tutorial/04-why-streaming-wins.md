@@ -18,7 +18,7 @@ Let's compare them across multiple dimensions.
 ## Memory Efficiency: The Critical Difference
 
 ### Test Setup
-- Server: Node.js v20+, 4 GB RAM limit
+- Server: Node.js v22+, 4 GB RAM limit
 - Database: MSSQL Server with `spGenerateData` stored procedure
 - Columns: 10 fields (integers, decimals, strings, dates, JSON)
 - Single concurrent user
