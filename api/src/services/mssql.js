@@ -215,7 +215,7 @@ export const testBadRecord = async () => {
     await initial_test(-1);
     debugMSSQL("Initial failure test failed ");
   } catch (err) {
-    debugMSSQL("Initial database failre test passed: %O", {
+    debugMSSQL("Initial database failure test passed: %O", {
       message: err.message,
       code: err.code,
     });
