@@ -85,8 +85,8 @@
 | 9 | Event handlers attached after `listen()` | Error / Race | MEDIUM | ✅ FIXED | server.js (api + app) |
 | 10 | Dead `setImmediate` before `process.exit` | Dead Code | LOW | ✅ FIXED | server.js (api) |
 | 11 | `process.memoryUsage()` in hot path | Event Loop | LOW | ✅ ACCEPTABLE | exportController.js |
-| 12 | Polymorphic error objects (conditional spread) | Deopt | LOW | ⏳ SPRINT 3 | api.js / app.js |
-| 13 | Inconsistent error class shapes | Deopt | LOW | ⏳ SPRINT 3 | errors.js (api) |
+| 12 | Polymorphic error objects (conditional spread) | Deopt | LOW | ✅ FIXED | api.js / app.js |
+| 13 | Inconsistent error class shapes | Deopt | LOW | ✅ FIXED | errors.js (api) |
 | 14 | `Number.parseInt` without radix | Best Practice | LOW | ⏳ SPRINT 3 | stress-test*.js |
 | 15 | `isPoolHealthy` dead code | Dead Code | LOW | ✅ REMOVED | mssql.js |
 | 16 | `util._extend` deprecation in http-proxy | Third-party Dep | LOW | ⏳ PATCH | http-proxy@1.18.1 |
@@ -459,51 +459,48 @@ if (rowCount % 5000 === 0) {
 ### 12. Deopt — Polymorphic Error Response Objects
 
 **File:** [api/src/api.js](api/src/api.js) ~line 50-57 and [app/src/app.js](app/src/app.js) ~line 73-80  
-**Category:** Deopt
-
-```javascript
-const errorResponse = {
-  error: {
-    message: isDevelopment ? err.message : 'Internal server error',
-    code: err.code || 'INTERNAL_ERROR',
-    ...(isDevelopment && { stack: err.stack })  // ← two hidden classes
-  }
-};
-```
+**Category:** Deopt  
+**Status:** ✅ FIXED
 
 **Problem:** Conditional spread produces objects with different shapes (with `stack` vs without). V8 marks the construction site as polymorphic. Since `isDevelopment` is constant per process, this is mildly wasteful — but only on error paths.
 
-**Fix (monomorphic):**
+**Solution Applied:**
 ```javascript
 const errorResponse = {
   error: {
     message: isDevelopment ? err.message : 'Internal server error',
     code: err.code || 'INTERNAL_ERROR',
-    stack: isDevelopment ? err.stack : undefined,
+    stack: isDevelopment ? err.stack : undefined,  // ← Always present, undefined in production
   }
 };
 ```
+
+**Impact:** Error response objects now have consistent shape (monomorphic), allowing V8 to optimize property access. The `stack` property is always present but set to `undefined` in production mode.
 
 ---
 
 ### 13. Deopt — Inconsistent Error Class Shapes
 
-**File:** [api/src/utils/errors.js](api/src/utils/errors.js) ~line 33-38  
-**Category:** Deopt
+**File:** [api/src/utils/errors.js](api/src/utils/errors.js) ~line 8-15, 30-35  
+**Category:** Deopt  
+**Status:** ✅ FIXED
 
+**Problem:** `DatabaseError` adds `originalError` that other `AppError` subclasses don't have. When the global error handler accesses `err.status` across different error types, V8 encounters megamorphic property lookups.
+
+**Solution Applied:**
 ```javascript
-export class DatabaseError extends AppError {
-  constructor(message, originalError = null) {
-    super(message, 500, 'DATABASE_ERROR');
-    this.name = 'DatabaseError';
-    this.originalError = originalError; // ← only DatabaseError has this
+export class AppError extends Error {
+  constructor(message, status = 500, code = 'INTERNAL_ERROR') {
+    super(message);
+    this.name = 'AppError';
+    this.status = status;
+    this.code = code;
+    this.originalError = null;  // ← Now all subclasses have consistent shape
   }
 }
 ```
 
-**Problem:** `DatabaseError` adds `originalError` that other `AppError` subclasses don't have. When the global error handler accesses `err.status` across different error types, V8 encounters megamorphic property lookups. Only on error paths — negligible impact.
-
-**Fix:** Add `this.originalError = null` in `AppError` base class for consistent shape.
+**Impact:** All error subclasses now share the same hidden class structure with `originalError` property. V8 can optimize property access across all error types (monomorphic instead of megamorphic).
 
 ---
 

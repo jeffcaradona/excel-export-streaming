@@ -70,7 +70,7 @@ app.use((err, _req, res, _next) => {
     error: {
       message: isDevelopment ? err.message : 'Internal server error',
       code: err.code || 'INTERNAL_ERROR',
-      ...(isDevelopment && { stack: err.stack }),
+      stack: isDevelopment ? err.stack : undefined,
     },
   };
 

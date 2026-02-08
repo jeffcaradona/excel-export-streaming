@@ -11,6 +11,7 @@ export class AppError extends Error {
     this.name = 'AppError';
     this.status = status;
     this.code = code;
+    this.originalError = null;  // Consistent shape across all error subclasses
   }
 }
 
