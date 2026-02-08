@@ -408,10 +408,12 @@ Replace the catch block in `streamRequest.on('done', async () => { ... })` with:
 
 ## Related Issues
 
-- Issue #4: No backpressure in row handler (separate fix)
-- Issue #7: No error handler on `res` stream (separate fix)
+- Issue #4: No backpressure in row handler ✅ **Fixed in Sprint 2**
+- Issue #5: Unhandled rejection in pool error handler ✅ **Fixed in Sprint 2**
+- Issue #6: Shutdown timer never cleared ✅ **Fixed in Sprint 2**
+- Issue #7: No error handler on `res` stream ✅ **Fixed in Sprint 2**
 
-These should be addressed in Sprint 2 as they're independent of this fix.
+These issues were addressed in [Sprint 2](sprint-2.md) as they were independent of the error handling fixes in Sprint 1.
 
 ---
 
@@ -622,5 +624,5 @@ npm run test:coverage
 ---
 
 *Created: February 7, 2026*  
-*Updated: February 7, 2026 (Option A: Node.js test runner + sinon)*  
-*Status: Ready for test implementation*
+*Updated: February 8, 2026 (Sprint 2 completed - related issues resolved)*  
+*Status: ✅ Complete*

@@ -1,6 +1,6 @@
 import mssql from "mssql";
 
-import { setTimeout } from "node:timers";
+import { setTimeout, clearTimeout } from "node:timers";
 import { debugMSSQL } from "../../../shared/src/debug.js";
 import { getEnv } from "../config/env.js";
 import { DatabaseError } from "../utils/errors.js";
@@ -52,7 +52,9 @@ export const getConnectionPool = async () => {
         pool = new mssql.ConnectionPool(dbConfig);
 
         // Attach error event listeners for automatic recovery
-        pool.on("error", async (err) => {
+        // NOTE: NOT async — event emitters discard returned Promises.
+        // Using .catch() ensures rejections are always handled.
+        pool.on("error", (err) => {
           debugMSSQL("Pool error event: %O", {
             message: err.message,
             code: err.code,
@@ -60,7 +62,9 @@ export const getConnectionPool = async () => {
           // Mark pool as unhealthy so next call will attempt reconnection
           if (err.code === "ESOCKET" || err.code === "ECONNRESET") {
             debugMSSQL("Fatal pool error detected: " + err.code + " - resetting pool");
-            await closeAndResetPool();
+            closeAndResetPool().catch((error_) => {
+              debugMSSQL("Failed to reset pool after error: %O", { message: error_.message });
+            });
           }
         });
 
@@ -255,8 +259,9 @@ export const gracefulShutdown = async (drainTimeout = 30000) => {
       
       // Use a timeout race to enforce maximum drain time
       const closePromise = pool.close();
+      let drainTimer;
       const timeoutPromise = new Promise((resolve) => {
-        setTimeout(() => {
+        drainTimer = setTimeout(() => {
           debugMSSQL(`Warning: Shutdown taking longer than ${drainTimeout}ms`);
           resolve();
         }, drainTimeout);
@@ -264,6 +269,7 @@ export const gracefulShutdown = async (drainTimeout = 30000) => {
       
       // Race: whichever completes first
       await Promise.race([closePromise, timeoutPromise]);
+      clearTimeout(drainTimer);
       
       pool = null;
       debugMSSQL("Graceful shutdown completed");

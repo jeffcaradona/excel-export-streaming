@@ -1,13 +1,12 @@
 /**
- * Export proxy middleware — configures streaming proxy to the API service.
+ * Export proxy middleware factory — creates a streaming proxy to the API service.
  *
- * Encapsulates all proxy configuration, path rewriting, and error handling.
- * The route file stays thin: it only declares what path maps to this middleware.
+ * This is a dumb pipe: it proxies to whatever path it's told.
+ * Route mapping logic belongs in the routes file.
  *
  * Stream behavior:
  *   selfHandleResponse: false  → auto-pipe the response stream (no buffering)
  *   changeOrigin: true         → set Host header to the target
- *   pathRewrite                → rewrite to API's /export/report endpoint
  *
  * Error strategy:
  *   Status-code-only responses to avoid corrupting an in-flight Excel stream.
@@ -20,71 +19,75 @@ import { getEnv } from '../config/env.js';
 import { createMemoryLogger } from "../../../shared/src/memory.js";
 import { generateToken } from '../../../shared/src/auth/jwt.js';
 
-const memoryLogger = createMemoryLogger(process, debugApplication);
-
-
 const env = getEnv();
 const apiTarget = `http://${env.API_HOST}:${env.API_PORT}`;
+const memoryLogger = createMemoryLogger(process, debugApplication);
 
-const exportProxy = createProxyMiddleware({
-  target: apiTarget,
-  changeOrigin: true,
+/**
+ * Extracts query string from a URL.
+ * @param {string} url - The URL to extract query from
+ * @returns {string} Query string including '?' or empty string
+ */
+const extractQuery = (url) => {
+  const queryIndex = url.indexOf('?');
+  return queryIndex !== -1 ? url.slice(queryIndex) : '';
+};
 
-  pathRewrite: {
-    // Express strips the mount path (/exports/report) before the proxy sees it,
-    // so req.url arrives as '/'.  Rewrite to the API's actual endpoint.
-    '^/': '/export/report',
-  },
+/**
+ * Creates an export proxy middleware for a specific API path.
+ * @param {string} apiPath - The target API path (e.g., '/export/report')
+ * @returns {function} Express middleware
+ */
+export const createExportProxy = (apiPath) => {
+  return createProxyMiddleware({
+    target: apiTarget,
+    changeOrigin: true,
+    selfHandleResponse: false,
 
-  // Let http-proxy-middleware pipe the response stream directly — no buffering
-  selfHandleResponse: false,
+    pathRewrite: (_path, req) => `${apiPath}${extractQuery(req.url)}`,
 
-  on: {
-    /**
-     * Proxy error handler — status-code-only responses.
-     * Preserves stream integrity and avoids sending a JSON body
-     * that would corrupt a partially-written Excel download.
-     */
-    error(err, req, res) {
-      debugApplication(`Proxy error [${req.method} ${req.originalUrl}]: ${err.code || err.message}`);
-      memoryLogger('proxy-error');
+    on: {
+      /**
+       * Proxy error handler — status-code-only responses.
+       * Preserves stream integrity and avoids sending a JSON body
+       * that would corrupt a partially-written Excel download.
+       */
+      error(err, req, res) {
+        debugApplication(`Proxy error [${req.method} ${req.originalUrl}]: ${err.code || err.message}`);
+        memoryLogger('proxy-error');
 
-      if (res.headersSent) {
-        // Stream already started — nothing safe to send; destroy it.
-        debugApplication('Headers already sent, destroying response');
-        res.end();
-        return;
-      }
+        if (res.headersSent) {
+          debugApplication('Headers already sent, destroying response');
+          res.end();
+          return;
+        }
 
-      const statusCode = err.code === 'ECONNREFUSED' ? 502 : 504;
-      res.writeHead(statusCode).end();
+        const statusCode = err.code === 'ECONNREFUSED' ? 502 : 504;
+        res.writeHead(statusCode).end();
+      },
+
+      /**
+       * Inject JWT token and log successful proxy forwarding
+       */
+      proxyReq(proxyReq, req) {
+        const token = generateToken(env.JWT_SECRET, env.JWT_EXPIRES_IN);
+        proxyReq.setHeader('Authorization', `Bearer ${token}`);
+
+        debugApplication(`Proxy → ${apiTarget}${proxyReq.path} [${req.method}]`);
+        memoryLogger('proxy-start');
+      },
+
+      /**
+       * Log when response starts streaming back
+       */
+      proxyRes(proxyRes, req) {
+        debugApplication(`Proxy ← ${proxyRes.statusCode} [${req.method} ${req.originalUrl}]`);
+        memoryLogger('proxy-response');
+
+        proxyRes.on('end', () => {
+          memoryLogger.logPeakSummary('proxy-complete');
+        });
+      },
     },
-
-    /**
-     * Inject JWT token and log successful proxy forwarding
-     */
-    proxyReq(proxyReq, req) {
-      // Generate fresh JWT token for this request
-      const token = generateToken(env.JWT_SECRET, env.JWT_EXPIRES_IN);
-      proxyReq.setHeader('Authorization', `Bearer ${token}`);
-      
-      debugApplication(`Proxy → ${apiTarget}${proxyReq.path} [${req.method}]`);
-      memoryLogger('proxy-start');
-    },
-
-    /**
-     * Log when response starts streaming back
-     */
-    proxyRes(proxyRes, req) {
-      debugApplication(`Proxy ← ${proxyRes.statusCode} [${req.method} ${req.originalUrl}]`);
-      memoryLogger('proxy-response');
-
-      // Log peak memory when the stream completes
-      proxyRes.on('end', () => {
-        memoryLogger.logPeakSummary('proxy-complete');
-      });
-    },
-  },
-});
-
-export default exportProxy;
+  });
+};

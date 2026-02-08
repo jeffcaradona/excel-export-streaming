@@ -287,11 +287,34 @@ request.on('done', async () => {
 - Row 2 processed → written → garbage collected
 - At any moment, only **~1-10 rows** exist in memory (buffered between stages)
 
-**Backpressure (Natural):**
-- If browser receives slowly, HTTP stream fills up
-- If HTTP stream fills up, ExcelJS pauses
-- If ExcelJS pauses, MSSQL pauses sending rows
-- System automatically slows to match slowest component
+**Backpressure (Manual Implementation Required):**
+
+Node.js streams don't *automatically* handle backpressure between event-driven database streams and writable HTTP streams. Without manual backpressure handling:
+
+- If browser receives slowly, HTTP stream buffer fills up
+- Database keeps sending rows at full speed (no signal to pause)
+- Memory grows unbounded as data accumulates in the buffer
+- **Result:** Memory leak, defeating the streaming purpose
+
+**Our implementation adds manual backpressure:**
+```javascript
+request.on('row', row => {
+  worksheet.addRow(row).commit();
+  
+  // Check if HTTP response buffer is full
+  if (res.writableLength > res.writableHighWaterMark) {
+    request.pause();  // Tell database to stop sending rows
+    res.once('drain', () => request.resume());  // Resume when buffer drains
+  }
+});
+```
+
+**How it works:**
+- `res.writableLength` - bytes currently buffered in the HTTP stream
+- `res.writableHighWaterMark` - threshold (default: 16KB)
+- When buffer exceeds threshold: pause database stream
+- When buffer drains: resume database stream
+- **Result:** System automatically slows to match slowest component (the client)
 
 ## Why ExcelJS WorkbookWriter?
 

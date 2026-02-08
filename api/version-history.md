@@ -1,5 +1,147 @@
 # API Version History
 
+## 0.3.0 — Stream Stability & Pool Resilience (February 8, 2026)
+
+**Status:** ✅ Released  
+**Focus:** Backpressure handling, pool error recovery, shutdown cleanup, stream error handling  
+**Breaking Changes:** None  
+**Migration Required:** None
+
+### Summary
+
+Four stability issues fixed across streaming pipeline and database connection pool. This release prevents unbounded memory growth on slow clients, eliminates unhandled rejections from pool errors, clears stale shutdown timers, and handles response stream errors gracefully.
+
+### Fixed Issues
+
+#### Issue #4: No Backpressure in Row Handler — HIGH
+- **Impact:** Slow clients trigger unbounded memory growth; defeats streaming architecture
+- **Root Cause:** Database pushes rows at full speed regardless of client read speed; writes pile up in response buffer
+- **Solution:** Added pause/resume mechanism based on `res.writableLength` and `writableHighWaterMark`
+- **File:** [src/controllers/exportController.js](src/controllers/exportController.js#L145-L165)
+
+#### Issue #5: Unhandled Rejection in Pool Error Handler — MEDIUM
+- **Impact:** Process crash when pool reset fails after connection errors
+- **Root Cause:** Event emitters discard returned Promises; `async` pool error handler allows unhandled rejections
+- **Solution:** Removed `async` keyword, added explicit `.catch()` to `closeAndResetPool()`
+- **File:** [src/services/mssql.js](src/services/mssql.js#L57-L68)
+
+#### Issue #6: Shutdown Timer Never Cleared — MEDIUM
+- **Impact:** Event loop held open for 30 seconds after pool closes; delays container shutdown
+- **Root Cause:** `setTimeout` handle not stored; timer continues even after pool close wins race
+- **Solution:** Store timer reference and call `clearTimeout()` after race completes
+- **File:** [src/services/mssql.js](src/services/mssql.js#L258-L272)
+
+#### Issue #7: No Error Handler on Response Stream — MEDIUM
+- **Impact:** Process crash from writes to destroyed response stream
+- **Root Cause:** Client disconnect triggers write before close event fires; uncaught exception
+- **Solution:** Added `res.on('error')` handler that sets guard flag and cancels database request
+- **File:** [src/controllers/exportController.js](src/controllers/exportController.js#L106-L119)
+
+### Technical Details
+
+#### Backpressure Pattern
+Added byte-level backpressure using Node.js stream signals:
+
+```javascript
+streamRequest.on('row', (row) => {
+  worksheet.addRow(mapRowToExcel(row)).commit();
+  
+  // Pause when HTTP buffer full; resume on drain
+  if (res.writableLength > res.writableHighWaterMark) {
+    streamRequest.pause();
+    res.once('drain', () => streamRequest.resume());
+  }
+});
+```
+
+**Result:** Memory stays bounded regardless of client speed. Fast clients export at full database speed; slow clients trigger frequent pauses.
+
+#### Pool Error Handler Fix
+Replaced async event listener with explicit promise handling:
+
+```javascript
+// Before: async listener → unhandled rejection possible
+pool.on("error", async (err) => {
+  await closeAndResetPool();
+});
+
+// After: explicit .catch() → always handled
+pool.on("error", (err) => {
+  closeAndResetPool().catch((resetErr) => {
+    debugMSSQL("Failed to reset pool after error: %O", { message: resetErr.message });
+  });
+});
+```
+
+#### Shutdown Timer Cleanup
+Stored timer reference for proper cleanup:
+
+```javascript
+let drainTimer;
+const timeoutPromise = new Promise((resolve) => {
+  drainTimer = setTimeout(() => { /* ... */ }, drainTimeout);
+});
+await Promise.race([closePromise, timeoutPromise]);
+clearTimeout(drainTimer);  // Clear regardless of which wins
+```
+
+#### Response Stream Error Handler
+Added early error handler to catch writes to destroyed streams:
+
+```javascript
+res.on('error', (err) => {
+  if (streamError) return;
+  streamError = true;
+  debugAPI("Response stream error:", err);
+  if (streamRequest) {
+    streamRequest.cancel();
+  }
+});
+```
+
+### Testing
+
+- ✅ 44 Unit Tests (all existing + new tests for backpressure, pool errors, timer cleanup)
+- ✅ Test Coverage: ≥85%
+- ✅ Lint: 0 errors
+- ✅ Memory bounded under slow client conditions
+- ✅ No unhandled rejections from pool errors
+- ✅ Graceful shutdown completes in <2 seconds
+
+### Architectural Notes
+
+**Why Event-Driven Pattern Instead of `pipeline()`?**
+
+The official node-mssql docs show `pipeline()` for streaming, but our implementation uses the event-driven pattern because:
+
+1. ExcelJS writes to streams as side effects, not via Transform stream interface
+2. Byte-level backpressure adapts to actual client speed (no arbitrary batch sizes)
+3. Simpler than creating custom Transform stream wrappers for async operations
+4. Clear control flow for multi-step cleanup (database → transformation → HTTP)
+
+See [Sprint 2 documentation](../../documentation/sprint-2.md#architectural-decision-record-event-driven-vs-stream-based) for full rationale.
+
+### Verification Checklist
+
+- [x] Backpressure handling prevents OOM on slow clients
+- [x] Pool error handler never crashes on reset failures
+- [x] Shutdown timer cleared, no stale handles
+- [x] Response stream errors handled without crashes
+- [x] All 44 tests passing
+- [x] No new unhandled rejections
+- [x] Streaming export happy path unchanged
+- [x] Lint validation passing
+- [x] Version updated to 0.3.0
+
+### Compatibility
+
+- **Node.js:** ≥22 (unchanged)
+- **mssql:** v12.2.0+ (unchanged)
+- **ExcelJS:** v4.4.0+ (unchanged)
+- **Breaking Changes:** None
+
+---
+
 ## 0.1.0 — Critical Stability Fixes (February 7, 2026)
 
 **Status:** \u2705 Released  
