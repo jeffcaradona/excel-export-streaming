@@ -3,6 +3,8 @@ import autocannon from 'autocannon';
 import process from 'node:process';
 import console from 'node:console';
 
+import { generateToken } from '../shared/src/auth/jwt.js';
+
 // Parse command-line arguments
 const args = process.argv.slice(2);
 const getArgValue = (argName, defaultValue) => {
@@ -14,11 +16,23 @@ const connections = getArgValue('--connections', 20);
 const duration = getArgValue('--duration', 60);
 const rowCount = getArgValue('--rowCount', 20_000);
 
+// Load JWT_SECRET from environment
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret) {
+  console.error('❌ Error: JWT_SECRET environment variable is not set');
+  console.error('   Please ensure .env file is present with JWT_SECRET defined');
+  process.exit(1);
+}
+
+// Generate JWT token for the stress test
+const token = generateToken(jwtSecret);
+
 console.log(`🧪 Starting Stress Test`);
 console.log(`   URL: http://localhost:3001/export/report?rowCount=${rowCount}`);
 console.log(`   Connections: ${connections}`);
 console.log(`   Duration: ${duration}s`);
 console.log(`   Row Count: ${rowCount.toLocaleString()}`);
+console.log(`   Authorization: Bearer token`);
 console.log('');
 
 const result = await autocannon({
@@ -31,7 +45,17 @@ const result = await autocannon({
     client.on('error', (err) => {
       console.error('Client error:', err.message);
     });
-  }
+  },
+  requests: [
+    {
+      path: `/export/report?rowCount=${rowCount}`,
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'User-Agent': 'stress-test/1.0'
+      }
+    }
+  ]
 });
 
 console.log('\n📊 Test Results:');

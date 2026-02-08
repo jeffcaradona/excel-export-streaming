@@ -25,12 +25,12 @@
     "test:integration": "node --test api/tests/**/*.integration.test.js --test-timeout=10000",
     "test:coverage": "c8 node --test api/tests/**/*.test.js shared/tests/**/*.test.js",
     "test:shared": "node --test shared/tests/**/*.test.js",    
-    "stress-test": "node stress-test.js",
-    "stress-test:light": "node stress-test.js --connections 5 --duration 60",
-    "stress-test:heavy": "node stress-test.js --connections 50 --duration 60",
-    "stress-test:buffered": "node stress-test-buffered.js",
-    "stress-test:buffered:light": "node stress-test-buffered.js --connections 5 --duration 60",
-    "stress-test:buffered:heavy": "node stress-test-buffered.js --connections 20 --duration 60"
+    "stress-test": "node --env-file=.env tests/stress-test.js",
+    "stress-test:light": "node --env-file=.env tests/stress-test.js --connections 5 --duration 60",
+    "stress-test:heavy": "node --env-file=.env tests/stress-test.js --connections 50 --duration 60",
+    "stress-test:buffered": "node --env-file=.env tests/stress-test-buffered.js",
+    "stress-test:buffered:light": "node --env-file=.env tests/stress-test-buffered.js --connections 5 --duration 60",
+    "stress-test:buffered:heavy": "node --env-file=.env tests/stress-test-buffered.js --connections 20 --duration 60"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

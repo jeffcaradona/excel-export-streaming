@@ -69,13 +69,19 @@ curl "http://localhost:3000/exports/report?rowCount=10000" -o test.xlsx
 | 100,000   | 68 MB     | 487 MB   | **7x**     |
 | 1,000,000 | 79 MB     | ~5 GB    | **63x**    |
 
-### Concurrent Users
+### Concurrent Users (20k row exports)
 
-| Export Size | Streaming | Buffered | Winner |
-|-------------|-----------|----------|--------|
-| 100k rows   | 50+ users | 3-5 users | **Streaming (10x)** |
+| Scenario | Streaming | Buffered | Winner |
+|----------|-----------|----------|--------|
+| 5 users  | 3.84 req/sec | 0.92 req/sec | **Streaming (4.17x)** |
+| 50 users | Stable | OOM Crash | **Streaming** |
 
-See [Why Streaming Wins](documentation/tutorial/04-why-streaming-wins.md) for complete benchmarks.
+**Light Load Test** (5 connections, 60 seconds, 20k rows):
+- Streaming: **9.45 MB/s throughput, 1293ms median latency**
+- Buffered: **2.02 MB/s throughput, 5242ms median latency**
+- Verdict: Streaming is **4-5x faster** ⚡
+
+See [Complete Performance Analysis](documentation/tutorial/04-why-streaming-wins.md) for detailed benchmarks.
 
 ## Architecture
 
