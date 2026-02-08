@@ -337,7 +337,50 @@ export const streamReportExport = async (req, res, next) => {
 
 From our [stress tests](../../documentation/STRESS-TEST.md) using `autocannon`:
 
-### Test: 50 Concurrent Users, 100k Rows Each
+### Test: Light Load (5 Concurrent Users, 20k Rows)
+
+**Streaming (`/export/report`)** - ✅ Excellent Performance:
+```
+Running 60s test @ http://localhost:3001/export/report?rowCount=20000
+5 connections
+
+Results:
+  Requests/sec:   3.84
+  Throughput:     9.45 MB/s
+  Latency:        p50: 1293ms, p99: 2269ms
+  Errors:         0 (0%)
+  Timeouts:       0 (0%)
+  
+Status: ✅ PASS - Fast, stable, no issues
+```
+
+**Buffered (`/export/report-buffered`)** - ⚠️ Significantly Slower:
+```
+Running 60s test @ http://localhost:3001/export/report-buffered?rowCount=20000
+5 connections
+
+Results:
+  Requests/sec:   0.92
+  Throughput:     2.02 MB/s
+  Latency:        p50: 5242ms, p99: 5502ms
+  Errors:         0 (0%)
+  Timeouts:       0 (0%)
+  
+Status: ⚠️ FUNCTIONAL but 4-5x slower
+```
+
+**Light Load Comparison:**
+
+| Metric | Streaming | Buffered | Difference |
+|--------|-----------|----------|-----------|
+| **Requests/sec** | 3.84 | 0.92 | 4.17x faster |
+| **Throughput (MB/s)** | 9.45 | 2.02 | 4.68x faster |
+| **Latency (p50)** | 1293ms | 5242ms | 4.04x lower |
+| **Latency (p99)** | 2269ms | 5502ms | 2.42x lower |
+
+**Key Insight:** Even at modest load (5 users, 20k rows), streaming is **4-5x faster**.
+
+### Test: Heavy Load (50 Concurrent Users, 100k Rows)
 
 **Streaming (`/export/report`):**
 ```bash
@@ -384,6 +427,8 @@ Memory (Server):
   
 Status: ❌ FAIL (OutOfMemoryError after 12 seconds)
 ```
+
+**The Breaking Point:** At 50 concurrent users, buffering catastrophically fails due to memory exhaustion, while streaming handles the load effortlessly.
 
 ### Test: Single User, 1M Rows
 
