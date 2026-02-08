@@ -2,26 +2,26 @@
 
 > **Date:** February 7, 2026  
 > **Scope:** Full codebase review for bad programming practices  
-> **Last Updated:** February 8, 2026 (Sprint 3 Review in progress)  
+> **Last Updated:** February 8, 2026 (Sprint 3 Complete)  
 > **Exclusion:** Buffered export endpoint intentionally loads all data into memory for demo/comparison — not a bug
 
 ---
 
 ## Sprint 3 Summary (In Progress)
 
-**Status:** 🔄 Review Complete, Fixes Pending  
-**Issues Identified:** 20 (0 HIGH, 5 MEDIUM, 15 LOW)  
+**Status:** ✅ Complete  
+**Issues Identified:** 21 (0 HIGH, 5 MEDIUM, 16 LOW)  
+**Issues Fixed This Sprint:** 10 (✅ #8-10, #12-15, #18, #20, #21)  
 **Critical:** 0 issues blocking deployment  
-**Previous Progress:** Sprints 1 & 2 completed 7 issues, all verified as fixed  
 
-**Key Findings:**
-- ✅ All Sprint 1 & 2 fixes verified and functional (`#1-#7`)
-- ✅ Stress tests correctly updated with JWT authentication (`#17`)
-- ⏳ 5 planned issues still remain from Sprint 2 review (`#8-10`, `#12-13`)
-- ⏳ 5 additional best-practice issues identified (`#14`, `#15`, `#18-19`)
-- ⏳ 2 new issues found (`#20-21`)
+**Key Achievements:**
+- ✅ All critical deployment issues resolved (#8, #9, #14)
+- ✅ All dead code removed (#10, #15, #18, #21)
+- ✅ V8 deoptimizations fixed (#12, #13)
+- ✅ Environment consistency improved (#20)
+- ✅ Codebase fully production-ready
 
-**Assessment:** Codebase is **production-ready** with no critical bugs. Remaining items are quality/performance improvements suitable for future sprints.
+**Remaining Issues:** 1 LOW priority (⏳ #16: Third-party deprecation warning — deferred to future sprint)
 
 ---
 
@@ -87,13 +87,13 @@
 | 11 | `process.memoryUsage()` in hot path | Event Loop | LOW | ✅ ACCEPTABLE | exportController.js |
 | 12 | Polymorphic error objects (conditional spread) | Deopt | LOW | ✅ FIXED | api.js / app.js |
 | 13 | Inconsistent error class shapes | Deopt | LOW | ✅ FIXED | errors.js (api) |
-| 14 | `Number.parseInt` without radix | Best Practice | LOW | ⏳ SPRINT 3 | stress-test*.js |
+| 14 | `Number.parseInt` without radix | Best Practice | LOW | ✅ FIXED | stress-test*.js |
 | 15 | `isPoolHealthy` dead code | Dead Code | LOW | ✅ REMOVED | mssql.js |
 | 16 | `util._extend` deprecation in http-proxy | Third-party Dep | LOW | ⏳ PATCH | http-proxy@1.18.1 |
 | 17 | Stress tests bypass JWT authentication | Test Gap | MEDIUM | ✅ FIXED | stress-test*.js |
-| 18 | `DatabaseMock.wrapAsDbError()` wrong constructor args | Test Quality | LOW | ⏳ SPRINT 3 | database.mock.js |
+| 18 | `DatabaseMock.wrapAsDbError()` wrong constructor args | Test Quality | LOW | ✅ REMOVED | database.mock.js |
 | 19 | Confusing test logic in `testBadRecord()` | Best Practice | LOW | ✅ REMOVED | mssql.js |
-| 20 | Missing JWT_EXPIRES_IN validation in API env | Best Practice | LOW | ⏳ SPRINT 3 | env.js (api) |
+| 20 | Missing JWT_EXPIRES_IN validation in API env | Best Practice | LOW | ✅ FIXED | env.js (api) |
 | 21 | Unused exported function `testBadRecord()` | Dead Code | LOW | ✅ REMOVED | mssql.js |
 
 ---
@@ -506,14 +506,18 @@ export class AppError extends Error {
 
 ### 14. `Number.parseInt` Without Radix in Stress Tests
 
-**File:** stress-test.js and stress-test-buffered.js ~line 10  
-**Category:** Best Practice
+**File:** [stress-test.js](../../stress-test.js) and [stress-test-buffered.js](../../stress-test-buffered.js) ~line 10-13  
+**Category:** Best Practice  
+**Status:** ✅ FIXED
 
+**Problem:** Missing radix parameter in `Number.parseInt()` can lead to unexpected behavior if input strings start with '0' (octal) or '0x' (hex).
+
+**Solution Applied:**
 ```javascript
-Number.parseInt(args[index + 1])  // missing radix
+Number.parseInt(args[index + 1], 10)  // ← Explicit base-10 radix
 ```
 
-**Fix:** `Number.parseInt(args[index + 1], 10)`
+**Impact:** Parsing behavior is now explicit and predictable. All numeric arguments are guaranteed to be interpreted as base-10 integers, preventing edge cases with leading zeros.
 
 ---
 
@@ -546,33 +550,21 @@ export const isPoolHealthy = async () => {
 
 **File:** [api/src/config/env.js](api/src/config/env.js)  
 **Category:** Best Practice  
-**Severity:** LOW
+**Severity:** LOW  
+**Status:** ✅ FIXED
 
-The API environment schema does not validate `JWT_EXPIRES_IN`, though the BFF does:
+**Problem:** The API environment schema did not validate `JWT_EXPIRES_IN`, though the BFF does. This created inconsistency between the two services' environment configurations.
 
-**API env.js:**
-```javascript
-const envSchema = z.object({
-  // ... no JWT_EXPIRES_IN
-  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
-});
-```
-
-**BFF env.js:**
+**Solution Applied:**
 ```javascript
 const envSchema = z.object({
   // ...
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
-  JWT_EXPIRES_IN: z.string().default('15m'),  // ← present
+  JWT_EXPIRES_IN: z.string().optional(), // API only verifies tokens, BFF generates them
 });
 ```
 
-**Problem:** This is not a functional issue (the API doesn't generate tokens, only verifies them), but it's inconsistent. For clarity and consistency, add the field to API's schema with a .default() or .optional() flag.
-
-**Fix:**
-```javascript
-JWT_EXPIRES_IN: z.string().optional(),  // API doesn't use it, BFF does
-```
+**Impact:** Environment schemas are now consistent across services. The API accepts `JWT_EXPIRES_IN` as an optional field, clarifying that while the BFF uses it for token generation, the API only verifies tokens.
 
 ---
 
@@ -683,31 +675,16 @@ const result = await autocannon({
 
 ### 18. `DatabaseMock.wrapAsDbError()` — Incorrect Constructor Arguments
 
-**File:** [api/tests/mocks/database.mock.js](../../api/tests/mocks/database.mock.js) ~line 73-78  
+**File:** [api/tests/mocks/database.mock.js](../../api/tests/mocks/database.mock.js) ~line 61-67  
 **Category:** Test Quality  
-**Severity:** LOW
+**Severity:** LOW  
+**Status:** ✅ REMOVED
 
-```javascript
-static wrapAsDbError(originalError) {
-  return new DatabaseError(
-    originalError.message || 'Database error',
-    originalError.code || 'DB_ERROR'   // ← string, not Error object
-  );
-}
-```
+**Problem:** Function was exported but never called by any tests — dead test code. Additionally, it passed incorrect arguments to `DatabaseError` constructor (string instead of Error object).
 
-**Problem:** `DatabaseError` constructor signature is `constructor(message, originalError = null)` — the second parameter expects an Error object. The mock passes `originalError.code || 'DB_ERROR'` (a string), so `this.originalError` becomes the string `'DB_ERROR'` instead of the actual error. This could mask bugs in tests that rely on `originalError` being an Error instance. Additionally, `wrapAsDbError()` is not called by any current tests — it is dead test code.
+**Solution Applied:** Deleted unused `wrapAsDbError()` function and removed the unused `DatabaseError` import from the test mock file.
 
-**Fix:**
-```javascript
-static wrapAsDbError(originalError) {
-  return new DatabaseError(
-    originalError.message || 'Database error',
-    originalError  // Pass the Error object, not a string
-  );
-}
-```
-Or remove the method if unused.
+**Impact:** Cleaner test mock with no dead code. Only actively used helper functions remain.
 
 ---
 
@@ -792,22 +769,21 @@ The following new modules were reviewed and found to have no issues:
 ### Critical Priority (For Enterprise Deployment)
 1. ✅ **Issue #8** (exportProxy.js) — Proxy error stream destroy — COMPLETE
 2. ✅ **Issue #9** (server.js) — Event handler ordering — COMPLETE
-3. **Issue #14** (stress-test.js) — Number.parseInt radix parameter
+3. ✅ **Issue #14** (stress-test.js) — Number.parseInt radix parameter — COMPLETE
 
 ### High Priority (Code Quality)
-1. **Issue #21** (mssql.js) — Delete unused testBadRecord() function
-2. **Issue #15** (mssql.js) — Delete unused isPoolHealthy() function
-3. **Issue #18** (database.mock.js) — Fix wrapAsDbError() constructor
+1. ✅ **Issue #21** (mssql.js) — Delete unused testBadRecord() function — REMOVED
+2. ✅ **Issue #15** (mssql.js) — Delete unused isPoolHealthy() function — REMOVED
+3. ✅ **Issue #18** (database.mock.js) — Fix wrapAsDbError() constructor — REMOVED
 4. ✅ **Issue #10** (server.js) — Clean up setImmediate/process.exit patterns — COMPLETE
 
 ### Medium Priority (Optimization)
-7. **Issue #12** (api.js / app.js) — Monomorphic error responses
-8. **Issue #13** (errors.js) — Consistent error class shapes
-9. **Issue #10** (server.js) — Clean up setImmediate/process.exit patterns
+5. ✅ **Issue #12** (api.js / app.js) — Monomorphic error responses — COMPLETE
+6. ✅ **Issue #13** (errors.js) — Consistent error class shapes — COMPLETE
 
 ### Low Priority (Non-Critical)
-10. **Issue #20** (env.js) — Add JWT_EXPIRES_IN for consistency
-11. **Issue #16** (http-proxy) — Apply patch-package for deprecation warning
+7. ✅ **Issue #20** (env.js) — Add JWT_EXPIRES_IN for consistency — COMPLETE
+8. **Issue #16** (http-proxy) — Apply patch-package for deprecation warning — DEFERRED
 
 ---
 
@@ -824,8 +800,8 @@ The following new modules were reviewed and found to have no issues:
 ⚠️ **Recommended Before Deployment**
 - [x] Fix proxy error handler (#8) — prevents truncated file downloads — COMPLETE
 - [x] Fix server event handler ordering (#9) — reduces edge case risk — COMPLETE
-- [ ] Add radix to Number.parseInt (#14) — prevents NaN surprises
-- [ ] Remove dead code (#15, #21) — cleaner codebase for maintenance
+- [x] Add radix to Number.parseInt (#14) — prevents NaN surprises — COMPLETE
+- [x] Remove dead code (#15, #21) — cleaner codebase for maintenance — COMPLETE
 
 ✅ **Already Acceptable**
 - [x] Memory usage tracking (#11) appropriate for 5000-row interval
@@ -865,4 +841,25 @@ The following new modules were reviewed and found to have no issues:
 
 ---
 
-*Last Updated: February 8, 2026 (Sprint 3 Review)*
+*Last Updated: February 8, 2026 (Sprint 3 Complete)*
+
+---
+
+## Sprint 3 Final Summary
+
+**Result:** 🎉 **SUCCESS** — All critical and high-priority issues resolved!  
+
+**Issues Fixed:** 10 total  
+- ✅ Critical deployment issues: #8, #9, #14  
+- ✅ Code quality improvements: #10, #12, #13, #20  
+- ✅ Dead code cleanup: #15, #18, #21  
+
+**Production Readiness:** ✅ **APPROVED**  
+- Zero HIGH/MEDIUM severity issues remaining  
+- All stream safety measures in place  
+- Error handling comprehensive  
+- Memory management optimized  
+- Authentication and security configured  
+
+**Deferred to Future Sprints:**  
+- Issue #16: Third-party deprecation warning (low priority, not blocking)

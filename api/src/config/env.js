@@ -26,6 +26,7 @@ const envSchema = z.object({
   
   // JWT authentication
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
+  JWT_EXPIRES_IN: z.string().optional(), // API only verifies tokens, BFF generates them
 });
 
 /**
