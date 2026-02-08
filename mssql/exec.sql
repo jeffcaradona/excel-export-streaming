@@ -1,7 +1,7 @@
 DECLARE @RC int;
 DECLARE @RowCount int;
 
--- TODO: Set parameter values here.
+
 SET @RowCount = 10000000;
 
 EXECUTE @RC = [dbo].[spGenerateData] 

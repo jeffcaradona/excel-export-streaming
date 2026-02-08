@@ -148,3 +148,5 @@ vite.config.ts.timestamp-*
 *.refactorlog
 *.sqlprojGenerated
 package-lock.json
+.vscode/
+.vscode/settings.json

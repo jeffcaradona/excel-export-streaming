@@ -4,7 +4,7 @@
  */
 
 import sinon from 'sinon';
-import { EventEmitter } from 'events';
+import { EventEmitter } from 'node:events';
 
 class StreamRequestMock {
   /**

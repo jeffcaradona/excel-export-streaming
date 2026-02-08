@@ -92,8 +92,8 @@ test('Unit Tests - exportController', async (t) => {
     try {
       await mockRequest.execute();
       assert.fail('Should have thrown');
-    } catch (_err) {
-      assert.strictEqual(_err.message, 'Connection lost');
+    } catch (_error) {
+      assert.strictEqual(_error.message, 'Connection lost');
       assert.strictEqual(mockRequest.execute.calledOnce, true);
     }
   });
@@ -182,6 +182,7 @@ test('Unit Tests - exportController', async (t) => {
     let cleanupCount = 0;
     let streamError = false;
 
+    
     const errorCleanup = () => {
       if (!streamError) {
         streamError = true;

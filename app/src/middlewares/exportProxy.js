@@ -30,7 +30,7 @@ const memoryLogger = createMemoryLogger(process, debugApplication);
  */
 const extractQuery = (url) => {
   const queryIndex = url.indexOf('?');
-  return queryIndex !== -1 ? url.slice(queryIndex) : '';
+  return queryIndex > -1 ? url.slice(queryIndex) : '';
 };
 
 /**

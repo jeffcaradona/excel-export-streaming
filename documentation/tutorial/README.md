@@ -107,12 +107,7 @@ Head-to-head comparison of streaming vs. buffered approaches:
 # Install dependencies
 npm install
 
-# Start API service (port 3001)
-cd api
-npm run dev
-
-# Start BFF service (port 3000)
-cd app
+# Start both services (or use npm run dev:api / npm run dev:app separately)
 npm run dev
 
 # Test streaming endpoint
@@ -126,7 +121,7 @@ curl "http://localhost:3000/exports/report?rowCount=10000" -o test.xlsx
 npm run stress-test
 
 # Test with custom parameters
-node stress-test.js --connections 20 --duration 60 --rowCount 100000
+node tests/stress-test.js --connections 20 --duration 60 --rowCount 100000
 ```
 
 See [STRESS-TEST.md](../STRESS-TEST.md) for detailed testing guide.

@@ -43,7 +43,7 @@ export function jwtAuthMiddleware(secret) {
       next();
     } catch (error) {
       // Handle specific JWT errors
-      let message = 'Invalid token';
+      let message = null;
       
       if (error.name === 'TokenExpiredError') {
         message = 'Token expired';

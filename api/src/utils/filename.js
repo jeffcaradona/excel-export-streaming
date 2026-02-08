@@ -10,13 +10,13 @@ export const generateTimestampedFilename = (prefix = 'report', extension = 'xlsx
   // Sanitize prefix to prevent path traversal and injection attacks
   // Allow only alphanumeric characters, hyphens, and underscores
   const sanitizedPrefix = String(prefix)
-    .replace(/[^a-zA-Z0-9_-]/g, '')
+    .replaceAll(/[^a-zA-Z0-9_-]/g, '')
     .slice(0, 50) // Limit length to prevent excessively long filenames
     || 'report'; // Use default if sanitization results in empty string
   
   // Sanitize extension similarly
   const sanitizedExtension = String(extension)
-    .replace(/[^a-zA-Z0-9]/g, '')
+    .replaceAll(/[^a-zA-Z0-9]/g, '')
     .slice(0, 10)
     || 'xlsx';
   

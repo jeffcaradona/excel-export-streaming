@@ -117,11 +117,7 @@ Authorization: Bearer <jwt-token>
 **Query Parameters:**
 - `rowCount` (optional, default: 30000, max: 1,048,576) - Number of rows to export
 
-**Memory Profile:**
-- 10k rows ≈ 20-50MB
-- 50k rows ≈ 100-250MB
-- 100k rows ≈ 200-500MB
-- 500k rows ≈ 1-2.5GB (likely OOM)
+**Memory Profile:** See [Performance Analysis](../documentation/tutorial/04-why-streaming-wins.md#memory-efficiency-the-critical-difference) for detailed benchmarks.
 
 ## Error Handling
 
@@ -161,50 +157,17 @@ The API implements several security best practices:
 - **Error Hiding** - Error stack traces only exposed in development mode
 - **Connection Pool Management** - Automatic recovery from database connection failures
 
-## Performance Characteristics
+## Performance
 
-### Streaming Export (`/export/report`)
+For detailed performance benchmarks, memory comparisons, and stress test results, see:
+- [Main README Performance Section](../README.md#performance)
+- [Complete Performance Analysis](../documentation/tutorial/04-why-streaming-wins.md)
+- [Stress Test Guide](../documentation/STRESS-TEST.md)
 
-**Memory Footprint:** Constant, ~50-80MB regardless of row count
-
-**Real-World Stress Test Results** (light load: 5 concurrent users, 20k rows each):
-- Requests/sec: **3.84** ⚡
-- Throughput: **9.45 MB/s** ⚡
-- Latency (p50): **1293ms**
-- Latency (p99): **2269ms**
-- Errors: **0**
-
-**Performance Benchmarks:**
-```
-Time to first byte: 50-100ms
-Throughput: ~500-1000 rows/second
-10k rows: 10-20 seconds
-100k rows: 100-200 seconds
-1M rows: 10-20 minutes
-```
-
-**Scalability:** Handles 50+ concurrent users without degradation
-
-### Buffered Export (`/export/report-buffered`)
-
-**Memory Footprint:** Grows linearly with row count
-
-**Real-World Stress Test Results** (light load: 5 concurrent users, 20k rows each):
-- Requests/sec: **0.92** (4.17x slower)
-- Throughput: **2.02 MB/s** (4.68x slower)
-- Latency (p50): **5242ms**
-- Latency (p99): **5502ms**
-- Errors: **0**
-
-**Memory Profile:**
-- 10k rows: 20-50MB
-- 50k rows: 100-250MB
-- 100k rows: 200-500MB+
-- 500k rows: 1-2.5GB (likely OOM)
-
-**Limits:** Crashes at ~50+ concurrent users due to memory exhaustion
-
-See [Complete Performance Analysis](../documentation/tutorial/04-why-streaming-wins.md) for detailed comparison.
+**Key metrics:**
+- Streaming: Constant ~50-80MB memory, 50+ concurrent users
+- Buffered: Linear memory growth, crashes at 50+ users
+- Streaming is 4-5x faster for throughput and request handling
 
 ## Development
 
