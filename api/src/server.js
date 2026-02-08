@@ -18,13 +18,13 @@ try {
 } catch (err) {
   debugServer(`Failed to validate environment: ${err.message}`);
   setImmediate(() => process.exit(1));
-  process.exit(1); // Unreachable but satisfies type checker
 }
 
 /**
  * Get port from environment and store in Express.
  */
 const port = normalizePort(env.API_PORT || "3000");
+
 app.set("port", port);
 
 /**
@@ -32,6 +32,8 @@ app.set("port", port);
  */
 // snyk:skip=Cleartext Transmission
 const server = http.createServer(app);
+server.on("error", onError);
+server.on("listening", onListening);
 
 // Initialize database and start server
 try {
@@ -46,8 +48,7 @@ try {
   // Use setImmediate to allow error to be logged before exit
   setImmediate(() => process.exit(1));
 }
-server.on("error", onError);
-server.on("listening", onListening);
+
 
 
 function onError(error) {

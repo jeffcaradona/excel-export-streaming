@@ -178,18 +178,7 @@ export const executeQuery = async (queryFn, operationName = "Database operation"
   }
 };
 
-/**
- * Check if the pool is connected and healthy
- */
-export const isPoolHealthy = async () => {
-  try {
-    await initial_test();
-    return true;
-  } catch (err) {
-    debugMSSQL("Pool health check failed: %O", { message: err.message });
-    return false;
-  }
-};
+
 
 export const initial_test = async (recQy = 1) => {
   // Validate input parameter upfront
@@ -209,20 +198,6 @@ export const initial_test = async (recQy = 1) => {
 
 
 
-export const testBadRecord = async () => {
- try {
-    debugMSSQL("Database failure test starting");
-    await initial_test(-1);
-    debugMSSQL("Initial failure test failed ");
-  } catch (err) {
-    debugMSSQL("Initial database failure test passed: %O", {
-      message: err.message,
-      code: err.code,
-    });
-    throw err; // Rethrow so caller knows initialization failed
-  } 
-
-}
 
 
 /**

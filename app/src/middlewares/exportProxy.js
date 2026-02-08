@@ -58,7 +58,7 @@ export const createExportProxy = (apiPath) => {
 
         if (res.headersSent) {
           debugApplication('Headers already sent, destroying response');
-          res.end();
+          res.destroy(err);
           return;
         }
 

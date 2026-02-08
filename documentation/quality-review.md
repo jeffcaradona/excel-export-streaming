@@ -81,20 +81,20 @@
 | 5 | Unhandled rejection in pool error handler | Error Handling | MEDIUM | ✅ FIXED | mssql.js |
 | 6 | Shutdown timer never cleared | Event Loop | MEDIUM | ✅ FIXED | mssql.js |
 | 7 | No error handler on `res` stream | Stream Issue | MEDIUM | ✅ FIXED | exportController.js |
-| 8 | `res.end()` instead of `res.destroy()` on proxy error | Stream Issue | MEDIUM | ⏳ SPRINT 3 | exportProxy.js |
-| 9 | Event handlers attached after `listen()` | Error / Race | MEDIUM | ⏳ SPRINT 3 | server.js (api + app) |
-| 10 | Dead `setImmediate` before `process.exit` | Dead Code | LOW | ⏳ SPRINT 3 | server.js (api) |
+| 8 | `res.end()` instead of `res.destroy()` on proxy error | Stream Issue | MEDIUM | ✅ FIXED | exportProxy.js |
+| 9 | Event handlers attached after `listen()` | Error / Race | MEDIUM | ✅ FIXED | server.js (api + app) |
+| 10 | Dead `setImmediate` before `process.exit` | Dead Code | LOW | ✅ FIXED | server.js (api) |
 | 11 | `process.memoryUsage()` in hot path | Event Loop | LOW | ✅ ACCEPTABLE | exportController.js |
 | 12 | Polymorphic error objects (conditional spread) | Deopt | LOW | ⏳ SPRINT 3 | api.js / app.js |
 | 13 | Inconsistent error class shapes | Deopt | LOW | ⏳ SPRINT 3 | errors.js (api) |
 | 14 | `Number.parseInt` without radix | Best Practice | LOW | ⏳ SPRINT 3 | stress-test*.js |
-| 15 | `isPoolHealthy` dead code | Dead Code | LOW | ⏳ SPRINT 3 | mssql.js |
+| 15 | `isPoolHealthy` dead code | Dead Code | LOW | ✅ REMOVED | mssql.js |
 | 16 | `util._extend` deprecation in http-proxy | Third-party Dep | LOW | ⏳ PATCH | http-proxy@1.18.1 |
 | 17 | Stress tests bypass JWT authentication | Test Gap | MEDIUM | ✅ FIXED | stress-test*.js |
 | 18 | `DatabaseMock.wrapAsDbError()` wrong constructor args | Test Quality | LOW | ⏳ SPRINT 3 | database.mock.js |
-| 19 | Confusing test logic in `testBadRecord()` | Best Practice | LOW | ⏳ SPRINT 3 | mssql.js |
+| 19 | Confusing test logic in `testBadRecord()` | Best Practice | LOW | ✅ REMOVED | mssql.js |
 | 20 | Missing JWT_EXPIRES_IN validation in API env | Best Practice | LOW | ⏳ SPRINT 3 | env.js (api) |
-| 21 | Unused exported function `testBadRecord()` | Dead Code | LOW | ⏳ SPRINT 3 | mssql.js |
+| 21 | Unused exported function `testBadRecord()` | Dead Code | LOW | ✅ REMOVED | mssql.js |
 
 ---
 
@@ -345,29 +345,30 @@ All previous fixes have been verified as correctly implemented:
 
 ### 8. Proxy `res.end()` Instead of `res.destroy()` on Error
 
-**File:** [app/src/middlewares/exportProxy.js](app/src/middlewares/exportProxy.js) ~line 50-55  
-**Category:** Stream Issue
-
-```javascript
-error(err, req, res) {
-  if (res.headersSent) {
-    debugApplication('Headers already sent, destroying response');
-    res.end();     // ← graceful FIN — client thinks truncated file is complete
-    return;
-  }
-}
-```
+**File:** [app/src/middlewares/exportProxy.js](app/src/middlewares/exportProxy.js#L56-L65)  
+**Category:** Stream Issue  
+**Status:** ✅ FIXED
 
 **Problem:** `res.end()` sends a normal FIN to the client, which may interpret the truncated file as a complete (but corrupt) download. `res.destroy()` sends RST, correctly signaling abnormal termination. The comment says "destroying" but the code does `.end()`.
 
-**Fix:**
+**Solution Applied:**
 ```javascript
-if (res.headersSent) {
-  debugApplication('Headers already sent, destroying response');
-  res.destroy(err);
-  return;
-}
+error(err, req, res) {
+  debugApplication(`Proxy error [${req.method} ${req.originalUrl}]: ${err.code || err.message}`);
+  memoryLogger('proxy-error');
+
+  if (res.headersSent) {
+    debugApplication('Headers already sent, destroying response');
+    res.destroy(err);  // ← FIX: Send RST instead of FIN
+    return;
+  }
+
+  const statusCode = err.code === 'ECONNREFUSED' ? 502 : 504;
+  res.writeHead(statusCode).end();
+},
 ```
+
+**Impact:** Clients now correctly receive an RST signal when a proxy error occurs mid-stream, preventing interpretation of truncated files as valid downloads.
 
 ---
 
@@ -375,58 +376,59 @@ if (res.headersSent) {
 
 ### 9. `onError` Handler Attached After `server.listen()` — Race Condition
 
-**File:** [api/src/server.js](api/src/server.js) ~line 44-51 and [app/src/server.js](app/src/server.js) ~line 36-38  
+**File:** [api/src/server.js](api/src/server.js#L35-L45) and [app/src/server.js](app/src/server.js#L35-L40)  
 **Category:** Error Handling / Race  
-**Severity:** MEDIUM (upgraded — now applies to both servers)
+**Severity:** MEDIUM  
+**Status:** ✅ FIXED
+
+**Problem:** `server.listen()` is asynchronous. If port binding fails extremely fast (before handlers are attached), the `error` event fires with no listener — edge case race condition affecting both API and BFF servers.
+
+**Solution Applied:**
 
 **API server.js:**
 ```javascript
+const server = http.createServer(app);
+server.on("error", onError);        // ← Attached BEFORE listen()
+server.on("listening", onListening);
+
 try {
   await initializeDatabase();
-  server.listen(port);         // ← fires async
-} catch (err) { ... }
-server.on("error", onError);   // ← attached AFTER listen()
-server.on("listening", onListening);
+  debugServer("Database initialized successfully");
+  server.listen(port);  // ← Now safe to listen
+}
 ```
 
 **BFF server.js:**
 ```javascript
-server.listen(port);
-server.on('error', onError);       // ← attached AFTER listen()
-server.on('listening', onListening);
-```
-
-**Problem:** `server.listen()` is asynchronous. If the port bind fails extremely fast (before handlers are attached), the `error` event fires with no listener. Works in practice because `listen` always defers past the current tick — but fragile and ordering-dependent. Now affects **both** the API and BFF servers.
-
-**Fix:** Attach handlers *before* `listen()` in both files:
-```javascript
-server.on("error", onError);
+const server = http.createServer(app);
+server.on("error", onError);        // ← Attached BEFORE listen()
 server.on("listening", onListening);
-server.listen(port);
+
+server.listen(port);  // ← Now safe to listen
 ```
+
+**Impact:** Handlers are guaranteed to be registered before any events can fire. Race condition eliminated across both servers.
 
 ---
 
 ### 10. Dead Code — `setImmediate` Before Synchronous `process.exit`
 
-**File:** [api/src/server.js](api/src/server.js) ~line 21-22  
-**Category:** Dead Code
+**File:** [api/src/server.js](api/src/server.js#L20-L21)  
+**Category:** Dead Code  
+**Severity:** LOW  
+**Status:** ✅ FIXED
 
+**Problem:** Code had both `setImmediate(() => process.exit(1))` and `process.exit(1)` on consecutive lines. Since `process.exit()` is synchronous, the `setImmediate` callback never executes — making one line dead code.
+
+**Solution Applied:**
 ```javascript
-setImmediate(() => process.exit(1));  // ← never executes
-process.exit(1);                       // ← runs immediately, kills process
+} catch (err) {
+  debugServer(`Failed to validate environment: ${err.message}`);
+  setImmediate(() => process.exit(1));  // ← Only this, no duplicate
+}
 ```
 
-**Problem:** `process.exit(1)` is synchronous — it terminates the process immediately. The `setImmediate` callback is the dead code, not the other way around. The comment ("Unreachable but satisfies type checker") has it backwards.
-
-**Fix:** Pick one:
-```javascript
-// Option A: Exit immediately
-process.exit(1);
-
-// Option B: Allow async cleanup (remove the synchronous exit)
-setImmediate(() => process.exit(1));
-```
+**Impact:** Eliminated dead code and made pattern consistent with rest of file (instances in error handler and graceful shutdown). Exit is now deferred properly, allowing error logs to flush before process terminates.
 
 ---
 
@@ -791,14 +793,15 @@ The following new modules were reviewed and found to have no issues:
 ## Recommended Fix Order (Sprint 3+)
 
 ### Critical Priority (For Enterprise Deployment)
-1. **Issue #8** (exportProxy.js) — Proxy error stream destroy
-2. **Issue #9** (server.js) — Event handler ordering  
+1. ✅ **Issue #8** (exportProxy.js) — Proxy error stream destroy — COMPLETE
+2. ✅ **Issue #9** (server.js) — Event handler ordering — COMPLETE
 3. **Issue #14** (stress-test.js) — Number.parseInt radix parameter
 
 ### High Priority (Code Quality)
-4. **Issue #21** (mssql.js) — Delete unused testBadRecord() function
-5. **Issue #15** (mssql.js) — Delete unused isPoolHealthy() function
-6. **Issue #18** (database.mock.js) — Fix wrapAsDbError() constructor
+1. **Issue #21** (mssql.js) — Delete unused testBadRecord() function
+2. **Issue #15** (mssql.js) — Delete unused isPoolHealthy() function
+3. **Issue #18** (database.mock.js) — Fix wrapAsDbError() constructor
+4. ✅ **Issue #10** (server.js) — Clean up setImmediate/process.exit patterns — COMPLETE
 
 ### Medium Priority (Optimization)
 7. **Issue #12** (api.js / app.js) — Monomorphic error responses
@@ -822,8 +825,8 @@ The following new modules were reviewed and found to have no issues:
 - [x] CORS and Helmet security headers enabled
 
 ⚠️ **Recommended Before Deployment**
-- [ ] Fix proxy error handler (#8) — prevents truncated file downloads
-- [ ] Fix server event handler ordering (#9) — reduces edge case risk
+- [x] Fix proxy error handler (#8) — prevents truncated file downloads — COMPLETE
+- [x] Fix server event handler ordering (#9) — reduces edge case risk — COMPLETE
 - [ ] Add radix to Number.parseInt (#14) — prevents NaN surprises
 - [ ] Remove dead code (#15, #21) — cleaner codebase for maintenance
 
