@@ -129,6 +129,23 @@ node stress-test.js --connections 20 --duration 60 --rowCount 100000
 
 See [STRESS-TEST.md](../STRESS-TEST.md) for detailed testing guide.
 
+## Authentication & Security
+
+Our streaming architecture includes JWT-based authentication:
+
+**Why JWT?**
+- BFF authenticates users with sessions/cookies
+- BFF generates time-limited JWT tokens for API access
+- API validates JWT before streaming begins
+- Failed authentication returns immediately (no resource consumption)
+
+**Key Insight:** JWT validation happens **before** streaming starts, so authentication failures are cheap (no database queries, no memory overhead).
+
+**The Flow:**
+Browser → BFF (validate session) → Generate JWT → API (validate JWT) → Stream data
+
+See [Part 3: Architecture Dissected](03-architecture-dissected.md#jwt-authentication--proxy-layer) for detailed implementation.
+
 ## Key Concepts
 
 ### Streaming vs. Buffering

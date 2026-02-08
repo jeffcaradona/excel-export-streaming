@@ -359,6 +359,27 @@ Transfer-Encoding: chunked
 
 Browser sees chunks arriving and writes them to disk immediately. File appears in Downloads while still being generated.
 
+### Authentication & Streaming
+
+A common concern: "Doesn't JWT authentication add overhead to streaming?"
+
+**Answer:** No. Here's why:
+
+1. **Authentication happens first** - JWT is validated before streaming begins
+2. **It's a simple check** - Verify token signature and expiration (milliseconds)
+3. **Then streaming begins** - If auth passes, data flows immediately
+4. **Memory unaffected** - Authentication doesn't add any memory overhead
+
+**The sequence:**
+```
+1. Request arrives with JWT in Authorization header (50KB)
+2. Check JWT signature and expiration (< 1ms)
+3. If valid: Streaming begins (constant memory from here on)
+4. If invalid: 401 response sent immediately (no resources consumed)
+```
+
+**Result:** Authentication is an extremely cheap gate-keeper that protects our streaming infrastructure.
+
 ## Real-World Memory Measurements
 
 From our actual stress tests and documentation:

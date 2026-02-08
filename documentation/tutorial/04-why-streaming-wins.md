@@ -152,6 +152,8 @@ $$
 - 50 users = 224 MB (smooth)
 - Limited by **database connections** (50 max), not memory
 
+**Note on Authentication:** Our JWT-based authentication adds negligible overhead. Each user's request is validated (< 1ms) before streaming begins. Failed authentications cost almost nothing (rejected immediately). Successful authentications proceed to streaming with constant per-user memory overhead.
+
 ### Production Incident Timeline (Buffered)
 
 ```

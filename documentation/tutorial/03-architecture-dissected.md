@@ -15,17 +15,21 @@ Here's the full data flow from database to browser:
 
 USER BROWSER                                                    
     │ GET /exports/report?rowCount=100000
+    │ (with session/cookies)
     ↓
 ┌─────────────────────────────────────┐
 │  BFF SERVICE (Port 3000)            │  [app/src/server.js]
 │  ├─ Express Router                  │  [app/src/routes/exports.js]
+│  ├─ JWT Auth Middleware             │  [shared/src/auth/jwt.js]
 │  └─ HTTP Proxy Middleware           │  [app/src/middlewares/exportProxy.js]
 └─────────────────────────────────────┘
-    │ Proxies request to API
-    │ selfHandleResponse: false ← Important: streams response
+    │ Validates user session
+    │ Generates JWT token
+    │ Proxies to API with Authorization header
     ↓
 ┌─────────────────────────────────────┐
 │  API SERVICE (Port 3001)            │  [api/src/server.js]
+│  ├─ JWT Verification Middleware     │  [shared/src/middlewares/jwtAuth.js]
 │  ├─ Express Router                  │  [api/src/routes/export.js]
 │  └─ Export Controller               │  [api/src/controllers/exportController.js]
 └─────────────────────────────────────┘
@@ -44,7 +48,7 @@ USER BROWSER
     ↓
 ┌─────────────────────────────────────┐
 │  MSSQL Connection Pool              │  [api/src/services/mssql.js]
-│  request.stream = true               │  ← Enables row-by-row events
+│  request.stream = true              │  ← Enables row-by-row events
 │  request.execute('spGenerateData')  │
 └─────────────────────────────────────┘
     │
@@ -64,12 +68,12 @@ USER BROWSER
 │  FOR EACH ROW FROM DATABASE:                                                │
 │                                                                             │
 │  request.on('row', row => {                                                 │
-│    1. mapRowToExcel(row)          ← Transform DB columns to Excel format   │
-│    2. worksheet.addRow().commit() ← Write row to stream immediately        │
-│    3. Every 5000 rows: log memory ← Monitor memory usage                   │
+│    1. mapRowToExcel(row)          ← Transform DB columns to Excel format    │
+│    2. worksheet.addRow().commit() ← Write row to stream immediately         │
+│    3. Every 5000 rows: log memory ← Monitor memory usage                    │
 │  })                                                                         │
 │                                                                             │
-│  Memory stays constant: Only 1 row in memory at a time                     │
+│  Memory stays constant: Only 1 row in memory at a time                      │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
     │
@@ -431,7 +435,31 @@ export function createMemoryLogger(process, debugFn) {
 [Export - Peak] Peak RSS: 79.22 MB | Peak Heap: 42.56 MB
 ```
 
-## Proxy Layer ([app/src/middlewares/exportProxy.js](../../app/src/middlewares/exportProxy.js))
+## JWT Authentication & Proxy Layer
+
+### JWT Authentication ([shared/src/auth/jwt.js](../../shared/src/auth/jwt.js))
+
+Our system uses JWT tokens for securing API access. Here's when authentication happens in the pipeline:
+
+**JWT Validation Sequence:**
+1. User makes request to BFF with valid session/cookies
+2. BFF session middleware validates user session ✓
+3. BFF generates JWT token with user info:
+   ```javascript
+   const token = jwt.sign(
+     { userId: req.user.id, role: req.user.role },
+     process.env.JWT_SECRET,
+     { expiresIn: '1h' }
+   );
+   ```
+4. BFF proxies request to API with JWT in `Authorization` header
+5. API JWT middleware validates token ✓
+6. If invalid: API returns 401 immediately (no streaming started)
+7. If valid: Streaming pipeline proceeds normally
+
+**Key Point:** JWT validation happens **before** streaming begins. Authentication failures don't consume database or memory resources because they reject the request at the API gateway.
+
+### Proxy Layer ([app/src/middlewares/exportProxy.js](../../app/src/middlewares/exportProxy.js))
 
 The BFF (Backend for Frontend) proxies requests to the API **without buffering**:
 
@@ -448,6 +476,13 @@ export const exportProxy = createProxyMiddleware({
   // No buffering in BFF service
   selfHandleResponse: false,
   
+  // Add JWT token to proxied request
+  onProxyReq: (proxyReq, req, res) => {
+    if (req.token) {
+      proxyReq.setHeader('Authorization', `Bearer ${req.token}`);
+    }
+  },
+  
   // Only handle status codes in errors (preserve streaming)
   onError: (err, req, res) => {
     if (res.headersSent) {
@@ -460,22 +495,38 @@ export const exportProxy = createProxyMiddleware({
 ```
 
 **Why This Design:**
-- BFF adds CORS, authentication, rate limiting (future)
+- BFF authenticates users and manages sessions
+- BFF generates JWT tokens for API authentication
+- BFF adds CORS, rate limiting (future)
 - Streams pass through BFF without touching memory
-- API service focuses on data access
+- API service focuses on data access and authentication verification
 
-## Error Handling Strategy
+## Authentication & Error Handling Strategy
 
 The implementation handles multiple error scenarios:
 
 | Scenario | Detection | Action |
 |----------|-----------|--------|
+| Invalid JWT token | JWT middleware | 401 Unauthorized |
+| Expired JWT token | JWT middleware | 401 Unauthorized |
+| Missing Authorization header | JWT middleware | 401 Unauthorized |
+| Invalid user session (BFF) | Session middleware | 403 Forbidden, redirect to login |
 | Invalid row count | Query param validation | 400 error with message |
 | Database connection failure | Pool connection error | 500 error, retry on next request |
 | Mid-stream SQL error | `request.on('error')` | Destroy response, cancel query |
 | Client disconnect | `req.on('close')` | Cancel query, log metrics |
 | Workbook finalization error | `try/catch` in 'done' | Destroy response |
 | Timeout (30s) | MSSQL `requestTimeout` | Query cancelled, error response |
+
+**Authentication Flow:**
+1. BFF validates user has valid session (before proxy)
+2. BFF generates JWT token with user context
+3. JWT sent in proxy request to API
+4. API JWT middleware validates token
+5. If invalid: 401 returned immediately (no streaming started)
+6. If valid: Export proceeds with streaming
+
+**Important:** Authentication happens **before** streaming begins, so failed auth doesn't consume streaming resources.
 
 ## Memory Snapshots
 
