@@ -414,48 +414,70 @@ The `streamError` flag prevents "trying to set headers twice" errors if multiple
 
 Without this handler, database continues generating data that goes nowhere. Canceling the query frees database connections and prevents wasted server work.
 
-## Supporting Components
+## Supporting Components You'll Need
 
-### Column Mapper ([api/src/utils/columnMapper.js](../../api/src/utils/columnMapper.js))
+### 1. Column Mapper Utility
 
-Defines Excel column schema and maps database rows:
+Define your column schema and transformation logic:
 
 ```javascript
+// columnMapper.js
 export const REPORT_COLUMNS = [
   { header: 'ID', key: 'id', width: 10 },
-  { header: 'Integer', key: 'colInt', width: 15 },
-  { header: 'Big Integer', key: 'colBigInt', width: 20 },
-  { header: 'Decimal', key: 'colDecimal', width: 15 },
-  // ... more columns
+  { header: 'Name', key: 'name', width: 30 },
+  { header: 'Amount', key: 'amount', width: 15, numFmt: '$#,##0.00' },
 ];
 
-export function mapRowToExcel(row) {
+export function mapRowToExcel(dbRow) {
   return {
-    id: row.Id,
-    colInt: row.ColInt,
-    colBigInt: row.ColBigInt?.toString(),  // BigInt to string
-    colDecimal: row.ColDecimal,
-    // ... more mappings
+    id: dbRow.Id,
+    name: dbRow.Name,
+    amount: dbRow.Amount,
+    // Convert types as needed (BigInt to string, Date formatting, etc.)
   };
 }
 ```
 
-### MSSQL Service ([api/src/services/mssql.js](../../api/src/services/mssql.js))
+### 2. Connection Pool Management
 
-Manages connection pool with automatic recovery:
+Set up a reusable connection pool with auto-recovery:
 
 ```javascript
-export const getConnectionPool = async () => {
+// services/database.js
+import mssql from 'mssql';
+
+const dbConfig = {
+  server: process.env.DB_SERVER,
+  database: process.env.DB_NAME,
+  authentication: {
+    type: 'azure-active-directory-default', // or your auth type
+  },
+  pool: {
+    min: 5,              // Keep warm connections ready
+    max: 50,            // Max concurrent connections
+    idleTimeoutMillis: 30000,
+  },
+  options: {
+    requestTimeout: 30000,  // 30 second timeout per query
+    enableKeepAlive: true,
+  },
+};
+
+let pool = null;
+let poolConnect = null;
+
+export async function getConnectionPool() {
   if (!poolConnect) {
     poolConnect = (async () => {
       pool = new mssql.ConnectionPool(dbConfig);
       
-      // Auto-recovery on connection errors
-      pool.on("error", async (err) => {
-        debugMSSQL("Pool error event: %O", { message: err.message, code: err.code });
-        if (err.code === "ESOCKET" || err.code === "ECONNRESET") {
-          debugMSSQL("Fatal pool error detected - resetting pool");
-          await closeAndResetPool();
+      // Handle pool errors gracefully
+      pool.on('error', async (err) => {
+        console.error('Pool error:', err);
+        if (err.code === 'ESOCKET' || err.code === 'ECONNRESET') {
+          // Fatal error - reset pool
+          pool = null;
+          poolConnect = null;
         }
       });
       
@@ -464,189 +486,92 @@ export const getConnectionPool = async () => {
     })();
   }
   return poolConnect;
-};
-```
+}
 
-**Key Features:**
-- Singleton pattern: One pool for entire application
-- Max 50 connections, min 5 warm connections
-- 30-second request timeout
-- Auto-reset on fatal errors
-
-### Memory Logger ([shared/src/memory.js](../../shared/src/memory.js))
-
-Tracks memory usage throughout export:
-
-```javascript
-export function createMemoryLogger(process, debugFn) {
-  const logger = (label = 'Memory Usage') => {
-    const mem = process.memoryUsage();
-    debugFn(`[${label}] Memory Usage: RSS: ${(mem.rss / 1024 / 1024).toFixed(2)} MB | ` +
-            `Heap Used: ${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB / ` +
-            `${(mem.heapTotal / 1024 / 1024).toFixed(2)} MB`);
-    
-    // Track peak values
-    if (mem.rss > logger.peak.rss) logger.peak.rss = mem.rss;
-    if (mem.heapUsed > logger.peak.heapUsed) logger.peak.heapUsed = mem.heapUsed;
-  };
-  
-  logger.peak = { rss: 0, heapUsed: 0 };
-  
-  logger.logPeakSummary = (label) => {
-    debugFn(`[${label}] Peak RSS: ${(logger.peak.rss / 1024 / 1024).toFixed(2)} MB | ` +
-            `Peak Heap: ${(logger.peak.heapUsed / 1024 / 1024).toFixed(2)} MB`);
-  };
-  
-  return logger;
+export async function closePool() {
+  if (pool) {
+    await pool.close();
+    pool = null;
+    poolConnect = null;
+  }
 }
 ```
 
-**Output Example:**
-```
-[Export] Memory Usage: RSS: 52.14 MB | Heap Used: 28.31 MB / 45.00 MB
-[Export - 5000 rows] Memory Usage: RSS: 54.23 MB | Heap Used: 29.87 MB / 45.00 MB
-[Export - 50000 rows] Memory Usage: RSS: 61.41 MB | Heap Used: 35.12 MB / 50.00 MB
-[Export - Complete] Memory Usage: RSS: 79.22 MB | Heap Used: 42.56 MB / 55.00 MB
-[Export - Peak] Peak RSS: 79.22 MB | Peak Heap: 42.56 MB
-```
+### 3. Input Validation
 
-## JWT Authentication & Proxy Layer
-
-### JWT Authentication ([shared/src/auth/jwt.js](../../shared/src/auth/jwt.js))
-
-Our system uses JWT tokens for securing API access. Here's when authentication happens in the pipeline:
-
-**JWT Validation Sequence:**
-1. User makes request to BFF with valid session/cookies
-2. BFF session middleware validates user session ✓
-3. BFF generates JWT token with user info:
-   ```javascript
-   const token = jwt.sign(
-     { userId: req.user.id, role: req.user.role },
-     process.env.JWT_SECRET,
-     { expiresIn: '1h' }
-   );
-   ```
-4. BFF proxies request to API with JWT in `Authorization` header
-5. API JWT middleware validates token ✓
-6. If invalid: API returns 401 immediately (no streaming started)
-7. If valid: Streaming pipeline proceeds normally
-
-**Key Point:** JWT validation happens **before** streaming begins. Authentication failures don't consume database or memory resources because they reject the request at the API gateway.
-
-### Proxy Layer ([app/src/middlewares/exportProxy.js](../../app/src/middlewares/exportProxy.js))
-
-The BFF (Backend for Frontend) proxies requests to the API **without buffering**:
+Protect against bad input:
 
 ```javascript
-import { createProxyMiddleware } from 'http-proxy-middleware';
-
-export const exportProxy = createProxyMiddleware({
-  target: 'http://localhost:3001',  // API service
-  changeOrigin: true,
-  pathRewrite: { '^/exports': '/export' },  // /exports/report → /export/report
+export function validateRowCount(rowCount) {
+  const count = parseInt(rowCount, 10);
   
-  // CRITICAL: selfHandleResponse: false
-  // This means proxy streams response directly to client
-  // No buffering in BFF service
-  selfHandleResponse: false,
-  
-  // Add JWT token to proxied request
-  onProxyReq: (proxyReq, req, res) => {
-    if (req.token) {
-      proxyReq.setHeader('Authorization', `Bearer ${req.token}`);
-    }
-  },
-  
-  // Only handle status codes in errors (preserve streaming)
-  onError: (err, req, res) => {
-    if (res.headersSent) {
-      res.destroy(err);
-    } else {
-      res.status(502).json({ error: { message: 'Proxy error', code: 'PROXY_ERROR' }});
-    }
+  if (isNaN(count) || count < 1) {
+    throw new Error('Row count must be at least 1');
   }
-});
+  
+  if (count > 1048576) {  // Excel max rows
+    throw new Error('Row count cannot exceed 1,048,576');
+  }
+  
+  return count;
+}
 ```
 
-**Why This Design:**
-- BFF authenticates users and manages sessions
-- BFF generates JWT tokens for API authentication
-- BFF adds CORS, rate limiting (future)
-- Streams pass through BFF without touching memory
-- API service focuses on data access and authentication verification
+## Database Considerations
 
-## Authentication & Error Handling Strategy
+### MSSQL (SQL Server)
 
-The implementation handles multiple error scenarios:
-
-| Scenario | Detection | Action |
-|----------|-----------|--------|
-| Invalid JWT token | JWT middleware | 401 Unauthorized |
-| Expired JWT token | JWT middleware | 401 Unauthorized |
-| Missing Authorization header | JWT middleware | 401 Unauthorized |
-| Invalid user session (BFF) | Session middleware | 403 Forbidden, redirect to login |
-| Invalid row count | Query param validation | 400 error with message |
-| Database connection failure | Pool connection error | 500 error, retry on next request |
-| Mid-stream SQL error | `request.on('error')` | Destroy response, cancel query |
-| Client disconnect | `req.on('close')` | Cancel query, log metrics |
-| Workbook finalization error | `try/catch` in 'done' | Destroy response |
-| Timeout (30s) | MSSQL `requestTimeout` | Query cancelled, error response |
-
-**Authentication Flow:**
-1. BFF validates user has valid session (before proxy)
-2. BFF generates JWT token with user context
-3. JWT sent in proxy request to API
-4. API JWT middleware validates token
-5. If invalid: 401 returned immediately (no streaming started)
-6. If valid: Export proceeds with streaming
-
-**Important:** Authentication happens **before** streaming begins, so failed auth doesn't consume streaming resources.
-
-## Memory Snapshots
-
-Let's see actual memory snapshots during a 100,000-row export:
-
+```javascript
+request.stream = true;
+request.execute('spStoredProcedure');
 ```
-Time: 0ms
-[Export] Memory Usage: RSS: 52.14 MB | Heap Used: 28.31 MB / 45.00 MB
+✅ Native streaming support
+✅ Emits 'row' events
 
-Time: 5000ms (5,000 rows)
-[Export - 5000 rows] Memory Usage: RSS: 54.23 MB | Heap Used: 29.87 MB / 45.00 MB
+### PostgreSQL
 
-Time: 50000ms (50,000 rows)
-[Export - 50000 rows] Memory Usage: RSS: 61.41 MB | Heap Used: 35.12 MB / 50.00 MB
+```javascript
+const query = client.query('SELECT * FROM large_table');
+query.on('row', (row) => { /* ... */ });
+```
+✅ Native streaming  
+✅ Use `pg-query-stream` for better backpressure
 
-Time: 100000ms (100,000 rows)
-[Export - 100000 rows] Memory Usage: RSS: 68.55 MB | Heap Used: 38.77 MB / 52.00 MB
+### MySQL
 
-Time: 115000ms (Complete)
-[Export - Complete] Memory Usage: RSS: 69.12 MB | Heap Used: 39.01 MB / 52.00 MB
-[Export - Peak] Peak RSS: 69.12 MB | Peak Heap: 39.01 MB
+```javascript
+const query = connection.query('SELECT * FROM large_table')
+  .stream({ highWaterMark: 5 });
+query.on('data', (row) => { /* ... */ });
+```
+✅ Streaming available  
+✅ Use `.stream()` method
+
+## Testing Your Implementation
+
+Before deploying, test with increasing dataset sizes:
+
+```bash
+# Test with 1,000 rows
+curl "http://localhost:3001/export/report?rowCount=1000" -o test-1k.xlsx
+
+# Test with 10,000 rows  
+curl "http://localhost:3001/export/report?rowCount=10000" -o test-10k.xlsx
+
+# Test with 100,000 rows
+curl "http://localhost:3001/export/report?rowCount=100000" -o test-100k.xlsx
+ls -lh test-*.xlsx  # Check file sizes match
 ```
 
-**Key Observation:** Memory increased by only **17 MB** (52 → 69 MB) for 100,000 rows.
-
-Compare to buffered approach:
-```
-Time: 0ms - Start: 48 MB
-Time: 2000ms - Data Loaded: 487 MB  (↑ 439 MB)
-Time: 5000ms - Rows Written: 512 MB (↑ 25 MB)
-Time: 7000ms - Buffer Generated: 531 MB (↑ 19 MB)
-Peak: 531 MB (11x higher than streaming!)
+**Monitor memory during export:**
+```bash
+# In another terminal
+while true; do ps aux | grep node | grep -v grep; sleep 1; done
 ```
 
-## Key Architectural Decisions
+Memory should stay relatively constant throughout export.
 
-| Decision | Rationale | Impact |
-|----------|-----------|--------|
-| **WorkbookWriter → res** | Stream directly to HTTP response | Constant memory |
-| **MSSQL `stream: true`** | Row events, not buffered array | No database buffering |
-| **Proxy passes streams** | BFF doesn't buffer response | E2E streaming |
-| **Memory logging** | Detect issues early | Observability |
-| **Client disconnect handling** | Cancel orphaned queries | Resource efficiency |
-| **Backpressure via pause/resume** | Prevents memory growth with slow clients | Bounded memory regardless of client speed |
-| **Event-driven over pipeline()** | ExcelJS uses side-effect writes, not Transform streams | Simpler than creating custom Transform wrapper |
+## When You Might Need a Proxy/BFF Layer
 
 ## Alternative Patterns: Why Not `pipeline()`?
 
