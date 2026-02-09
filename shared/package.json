@@ -4,11 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./server": "./src/server.js",
-    "./debug": "./src/debug.js",
-    "./memory": "./src/memory.js",
-    "./auth": "./src/auth/jwt.js",
-    "./middlewares/jwtAuth": "./src/middlewares/jwtAuth.js"
+    ".": "./src/index.js"
   },
   "files": [
     "src"
