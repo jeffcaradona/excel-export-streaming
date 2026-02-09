@@ -177,17 +177,17 @@ Data flows through all three simultaneously with no buffering.
 
 ## Real Data: When Does Streaming Matter?
 
-From stress tests with actual workloads:
+From testing with actual workloads:
 
 | Dataset Size | Buffered Memory | Streaming Memory | Risk Level | Recommendation |
 |--------------|-----------------|------------------|------------|----------------|
-| 10,000 rows | ~50 MB | ~50 MB | ✅ Safe | Either works |
-| 50,000 rows | ~250 MB | ~65 MB | ⚠️ Caution | Streaming preferred |
-| 100,000 rows | ~487 MB | ~68 MB | ❌ Risky | **Use streaming** |
-| 500,000 rows | ~2.5 GB | ~75 MB | ❌ OOM Likely | **Must use streaming** |
-| 1,000,000 rows | ~5 GB | ~79 MB | ❌ Crash | **Only option** |
+| Small datasets | Low | Low | ✅ Safe | Either works |
+| Medium datasets | Moderate | Low constant | ⚠️ Caution | Streaming preferred |
+| Large datasets | High | Low constant | ❌ Risky | **Use streaming** |
+| Very large | Critical | Low constant | ❌ OOM Likely | **Must use streaming** |
+| Massive | Fatal | Low constant | ❌ Crash | **Only option** |
 
-These numbers matter because they determine how many concurrent exports your server can handle.
+Streaming maintains constant memory while buffered memory grows linearly with dataset size. This determines how many concurrent exports your server can handle.
 
 ## Project Structure
 
