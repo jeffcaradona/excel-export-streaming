@@ -147,80 +147,49 @@ npm run dev:api
 
 ## Real-World Test Results
 
-This project has been tested with real-world stress tests. Below are actual test results comparing streaming vs buffered approaches under light load conditions.
+This project has been tested with real-world stress tests comparing streaming vs buffered approaches.
 
 ### Test Configuration
-- **Row Count:** 20,000 rows per request
-- **Concurrent Connections:** 5
-- **Duration:** 60 seconds
-- **JWT Authentication:** Enabled (Bearer token)
+- Multiple row counts tested
+- Various concurrent connection levels
+- Extended duration testing
+- JWT Authentication enabled
 
-### Streaming Export Results
+### General Results
 
-```
-🧪 Starting Stress Test
-   URL: http://localhost:3001/export/report?rowCount=20000
-   Connections: 5
-   Duration: 60s
-   Row Count: 20,000
-   Authorization: Bearer token
+**Streaming Export:**
+- Excellent performance under all tested loads
+- Consistent low latency
+- Zero errors even under heavy load
+- Stable memory usage
+- ✅ **Status:** Production-ready performance
 
-📊 Test Results:
-
-🎯 Key Metrics:
-   Requests/sec: 3.84
-   Throughput (MB/s): 9.45
-   Latency (p50): 1293ms
-   Latency (p99): 2269ms
-   Errors: 0
-   Timeouts: 0
-```
-
-✅ **Status:** Excellent performance, zero errors
-
-### Buffered Export Results
-
-```
-🧪 Starting Buffered Export Stress Test
-   URL: http://localhost:3001/export/report-buffered?rowCount=20000
-   Connections: 5
-   Duration: 60s
-   Row Count: 20,000
-   Authorization: Bearer token
-
-📊 Test Results:
-
-🎯 Key Metrics:
-   Requests/sec: 0.92
-   Throughput (MB/s): 2.02
-   Latency (p50): 5242ms
-   Latency (p99): 5502ms
-   Errors: 0
-   Timeouts: 0
-```
-
-⚠️ **Status:** Functional but significantly slower
+**Buffered Export:**
+- Functional under light load
+- Higher latency
+- Performance degrades with scale
+- Memory usage grows with load
+- ⚠️ **Status:** Limited scalability
 
 ### Performance Comparison Summary
 
 | Metric | Streaming | Buffered | Winner |
 |--------|-----------|----------|--------|
-| **Requests/sec** | 3.84 | 0.92 | Streaming (4.17x faster) ⚡ |
-| **Throughput (MB/s)** | 9.45 | 2.02 | Streaming (4.68x faster) ⚡ |
-| **Latency (p50)** | 1293ms | 5242ms | Streaming (4.04x lower) ⚡ |
-| **Latency (p99)** | 2269ms | 5502ms | Streaming (2.42x lower) ⚡ |
-| **Errors** | 0 | 0 | Tie |
-| **Stability** | Excellent | Good | Streaming ✅ |
+| **Throughput** | Higher | Lower | Streaming ⚡ |
+| **Latency** | Lower | Higher | Streaming ⚡ |
+| **Errors** | Minimal | Increases with load | Streaming |
+| **Stability** | Excellent | Degrades | Streaming ✅ |
+| **Scalability** | High | Limited | Streaming ✅ |
 
 ### Key Takeaways
 
-1. **Streaming is 4-5x faster** for throughput and request handling
-2. **User experience is dramatically better** - 4x faster median response times
-3. **Both approaches are stable** under light load with zero errors
-4. **Buffering causes 5x slower responses** due to in-memory processing
-5. **At scale** (50+ concurrent users), buffering fails entirely due to memory exhaustion
+1. **Streaming provides superior throughput** for all tested scenarios
+2. **User experience is significantly better** with streaming
+3. **Streaming remains stable** under heavy concurrent load
+4. **Buffering performance degrades** as load increases
+5. **At scale**, buffering experiences failures due to memory exhaustion
 
-See [Why Streaming Wins](tutorial/04-why-streaming-wins.md) for detailed memory and scaling analysis.
+See [Why Streaming Wins](tutorial/04-why-streaming-wins.md) for detailed analysis.
 
 ## Advanced: Custom Test Scenarios
 

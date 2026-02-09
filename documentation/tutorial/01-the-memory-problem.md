@@ -51,38 +51,38 @@ function downloadExcel() {
 **The Problem:**
 
 ```
-10,000 rows:
-  - JSON payload: ~2-5 MB
-  - Browser memory: ~20-50 MB (JSON + workbook + buffer)
+Small datasets:
+  - JSON payload: Small
+  - Browser memory: Manageable
   - Result: Works fine
 
-50,000 rows:
-  - JSON payload: ~10-25 MB
-  - Browser memory: ~100-250 MB
+Medium datasets:
+  - JSON payload: Moderate
+  - Browser memory: Growing
   - Result: Slow, but works
 
-100,000 rows:
-  - JSON payload: ~20-50 MB
-  - Browser memory: ~500 MB - 1 GB
-  - Result: Browser tab crashes or freezes
+Large datasets:
+  - JSON payload: Large
+  - Browser memory: High
+  - Result: Browser tab may crash or freeze
 
-500,000 rows:
-  - JSON payload: ~100-250 MB
-  - Browser memory: ~2-5 GB
+Very large datasets:
+  - JSON payload: Very large
+  - Browser memory: Critical
   - Result: Browser crash, OOM error
 ```
 
 **When It Works:** 
-✅ Small datasets (< 10k rows) on modern desktop browsers
+✅ Small datasets on modern desktop browsers
 
 **When It Breaks:**
-❌ Datasets > 50k rows (browser tab freezes or crashes)
-❌ Mobile users (memory limits are 5-10x tighter)
+❌ Large datasets (browser tab freezes or crashes)
+❌ Mobile users (memory limits are tighter)
 ❌ Slow network (JSON transfer time becomes noticeable)
 
 **Why:**
 - Data exists in multiple forms: JSON payload → JavaScript object → workbook object → file buffer
-- Browser JavaScript engines have hard memory limits (~1-4 GB per tab, much less on mobile)
+- Browser JavaScript engines have hard memory limits per tab
 - Network bandwidth adds latency (user waits for full download before generation starts)
 
 ### Approach #2: DataTables Export Plugin
@@ -158,42 +158,42 @@ app.get('/export/excel', async (req, res) => {
 
 **Memory Timeline:**
 ```
-Time 0ms    - Database query starts
-Time 2000ms - Database returns: All rows loaded into array in memory
-              Memory: 200-500 MB for 100k rows
-              
-Time 3000ms - Process rows: Fill Excel workbook
-              Memory: 400-800 MB (rows + workbook)
-              
-Time 5000ms - Generate complete file buffer
-              Memory: 600-1200 MB (rows + workbook + buffer)
-              
-Time 6000ms - Send to client  
-              Memory stays high until response completes
-              
-Time 8000ms - Response ends, garbage collector runs
-              Memory finally released
+Time 0     - Database query starts
+Time T1    - Database returns: All rows loaded into array in memory
+             Memory: Growing significantly with dataset size
+             
+Time T2    - Process rows: Fill Excel workbook
+             Memory: Further increase (rows + workbook)
+             
+Time T3    - Generate complete file buffer
+             Memory: Peak (rows + workbook + buffer)
+             
+Time T4    - Send to client  
+             Memory stays high until response completes
+             
+Time T5    - Response ends, garbage collector runs
+             Memory finally released
 ```
 
-**Real-World Memory Profile from Our Tests:**
+**Memory Profile Summary:**
 
 | Row Count | Memory at Data Load | Memory at Buffer Gen | Peak Memory | Risk Level |
 |-----------|---------------------|----------------------|-------------|------------|
-| 10,000    | 20-50 MB           | 40-80 MB             | ~80 MB      | ✅ Safe    |
-| 50,000    | 100-250 MB         | 200-400 MB           | ~400 MB     | ⚠️ Caution |
-| 100,000   | 200-500 MB         | 400-800 MB           | ~800 MB     | ⚠️ Caution |
-| 500,000   | 1-2.5 GB           | 2-4 GB               | ~4 GB       | ❌ OOM Likely |
-| 1,000,000 | 2-5 GB             | 4-8 GB               | ~8 GB       | ❌ Crash    |
+| Small     | Low                | Moderate             | Manageable  | ✅ Safe    |
+| Medium    | Moderate           | Growing              | Elevated    | ⚠️ Caution |
+| Large     | High               | High                 | High        | ⚠️ Caution |
+| Very Large| Very High          | Critical             | Critical    | ❌ OOM Likely |
+| Massive   | Critical           | Beyond Limits        | Fatal       | ❌ Crash    |
 
 **When It Works:**
-✅ Small-to-medium exports (< 50k rows on 4GB server)
+✅ Small-to-medium exports on appropriately sized servers
 ✅ Infrequent exports (not multiple concurrent requests)
 ✅ Development/testing environments
 
 **When It Breaks:**
-❌ 100k+ rows: approaches server memory limits
-❌ Multiple concurrent exports: hits OOM (OutOfMemory) quickly
-❌ 1M+ rows: essentially impossible
+❌ Large datasets approach server memory limits
+❌ Multiple concurrent exports hit OOM (OutOfMemory) quickly
+❌ Very large datasets become impractical
 
 **Why:**
 
@@ -214,32 +214,21 @@ $$
 $$
 
 Where:
-- **RowSize** = ~2-5 KB per row (depends on column count and data types)
+- **RowSize** = Per-row memory (depends on column count and data types)
 - **RowCount** = Number of rows exported
-- **Multiplier** = 3-5x (data exists in multiple forms)
+- **Multiplier** = Multiple copies of data in memory (data exists in multiple forms)
 
-### Example Calculation (100,000 rows)
-
-```
-Average row size: 3 KB
-Row count: 100,000
-Multiplier: 4x (result array + worksheet + buffer + headroom)
-
-Memory = 3 KB × 100,000 × 4
-       = 300,000 KB × 4
-       = 1,200,000 KB
-       = 1.2 GB
-```
+Memory grows linearly with the number of rows.
 
 ### Concurrent Users Problem
 
-If **5 concurrent users** request exports at the same time:
+If multiple concurrent users request exports at the same time, memory usage multiplies:
 
 ```
-Memory = 1.2 GB × 5 users = 6 GB
+Total Memory = Per-Export Memory × Number of Concurrent Users
 ```
 
-If your Node.js process has a 4 GB heap limit (common default), **the server crashes**.
+With limited server memory, the system quickly runs out of resources and crashes.
 
 ## The Production Incident Pattern
 
@@ -257,14 +246,14 @@ Here's how this typically plays out for us:
 
 ## Why "Just Add More Memory" Doesn't Work
 
-**Scenario:** We have 100,000 records to export
+Traditional buffered approaches don't scale well with concurrent users:
 
-| Server RAM | Max Concurrent Users | Cost Per Month | When It Fails |
-|------------|---------------------|----------------|---------------|
-| 4 GB       | 2-3 users           | $40            | Peak hours    |
-| 8 GB       | 4-6 users           | $80            | Holiday sales |
-| 16 GB      | 8-12 users          | $160           | Year-end reports |
-| 32 GB      | 16-24 users         | $320           | Audit season |
+| Server RAM | Max Concurrent Users | Scaling Behavior |
+|------------|---------------------|------------------|
+| Small      | Very few            | Fails quickly    |
+| Medium     | Limited             | Struggles        |
+| Large      | More but limited    | Still bounded    |
+| Very Large | Better but expensive| Cost prohibitive |
 
 **The Problem:** We're solving the wrong problem. Memory is **not** the constraint. The architecture is.
 
@@ -293,22 +282,22 @@ With streaming, only **one row exists in memory at a time**. Old rows are discar
 ## Decision Framework
 
 **Choose buffering if:**
-- Export is < 50,000 rows
+- Exports are consistently small
 - You rarely have concurrent exports
 - Implementation simplicity matters most
-- You have a large server (16+ GB RAM)
+- You have adequate server resources
 
 **Must use streaming if:**
-- Export could exceed 100,000 rows
+- Exports can be large
 - Users might request concurrent exports
 - You need guaranteed memory behavior
 - You want to support arbitrary dataset sizes
 
-**Why teams require streaming for our products:**
+**Why teams require streaming for production:**
 - Users demand "export all" functionality
-- Our datasets grow over time
+- Datasets grow over time
 - Concurrent exports are common during reporting periods
-- We want predictable server behavior
+- Predictable server behavior is critical
 
 ---
 

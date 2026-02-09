@@ -2,7 +2,7 @@
 
 **Memory-efficient Excel exports for Node.js applications**
 
-Stream large Excel files (1M+ rows) directly from your database to the browser with **constant memory usage** (~80 MB), regardless of dataset size.
+Stream large Excel files (1M+ rows) directly from your database to the browser with **constant memory usage**, regardless of dataset size.
 
 ## Why This Project?
 
@@ -13,10 +13,10 @@ Traditional Excel export approaches load entire datasets into memory, causing:
 - **High cloud costs** (need 32-64 GB RAM for production)
 
 **This project solves it** with streaming architecture:
-- **Constant memory** (~80 MB for any export size)
+- **Constant memory** for any export size
 - **Unlimited dataset size** (tested with 1M+ rows)
-- **High concurrency** (50+ simultaneous users)
-- **98% cost savings** ($15/month vs $736/month)
+- **High concurrency** support
+- **Significant cost savings** compared to traditional approaches
 
 ## Quick Start
 
@@ -62,27 +62,14 @@ curl "http://localhost:3000/exports/report?rowCount=10000" -o test.xlsx
 
 ## Performance
 
-### Memory Comparison
+Streaming architecture provides significant advantages over traditional buffered approaches:
 
-| Row Count | Streaming | Buffered | Difference |
-|-----------|-----------|----------|------------|
-| 10,000    | 52 MB     | 83 MB    | 1.6x       |
-| 100,000   | 68 MB     | 487 MB   | **7x**     |
-| 1,000,000 | 79 MB     | ~5 GB    | **63x**    |
+- **Memory Usage**: Constant memory footprint regardless of export size, while buffered memory grows linearly
+- **Concurrent Users**: Handles many more simultaneous users without memory exhaustion
+- **Response Times**: Faster time to first byte and overall throughput
+- **Scalability**: No OutOfMemory crashes even under heavy load
 
-### Concurrent Users (20k row exports)
-
-| Scenario | Streaming | Buffered | Winner |
-|----------|-----------|----------|--------|
-| 5 users  | 3.84 req/sec | 0.92 req/sec | **Streaming (4.17x)** |
-| 50 users | Stable | OOM Crash | **Streaming** |
-
-**Light Load Test** (5 connections, 60 seconds, 20k rows):
-- Streaming: **9.45 MB/s throughput, 1293ms median latency**
-- Buffered: **2.02 MB/s throughput, 5242ms median latency**
-- Verdict: Streaming is **4-5x faster** ⚡
-
-See [Complete Performance Analysis](documentation/tutorial/04-why-streaming-wins.md) for detailed benchmarks.
+See [Complete Performance Analysis](documentation/tutorial/04-why-streaming-wins.md) for more details.
 
 ## Architecture
 
@@ -154,17 +141,17 @@ excel-export-streaming/
 
 Streaming Excel export (recommended)
 
-- **Memory:** Constant ~80 MB regardless of row count
+- **Memory:** Constant regardless of row count
 - **Max rows:** Unlimited (tested 1M+)
-- **Time to first byte:** 50-100ms
+- **Time to first byte:** Fast initial response
 
 ### GET `/exports/report-buffered?rowCount=<number>`
 
 Buffered Excel export (for comparison)
 
-- **Memory:** Linear with row count (~500 MB for 100k rows)
-- **Max rows:** ~100,000 before OOM risk
-- **Time to first byte:** 2-10 seconds
+- **Memory:** Linear growth with row count
+- **Max rows:** Limited by available memory
+- **Time to first byte:** Slower due to buffering
 
 ### GET `/health`
 
@@ -252,7 +239,7 @@ This architecture is ideal for:
 - 👥 **User Data Exports** - GDPR compliance, data portability
 - 📅 **Historical Data** - Time-series data, audit logs
 
-**Production-tested** with 1M+ row exports and 50+ concurrent users.
+**Production-tested** with large exports and many concurrent users.
 
 ## Technology Stack
 
