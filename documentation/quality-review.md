@@ -239,7 +239,7 @@ streamRequest.on('row', (row) => {
 });
 ```
 
-**Impact:** Memory stays bounded regardless of client speed. Fast clients export at full speed; slow clients trigger automatic pausing/resuming. 500k row export memory: ~80MB (was ~500MB+ without backpressure).
+**Impact:** Memory stays bounded regardless of client speed. Fast clients export at full speed; slow clients trigger automatic pausing/resuming. Memory usage remains constant for large exports (previously grew linearly without backpressure).
 
 ---
 
@@ -819,7 +819,7 @@ The following new modules were reviewed and found to have no issues:
 | **Critical Issues** | 0 | ✅ No HIGH severity issues remaining |
 | **Stream Safety** | ✅ | All streams have error handlers + backpressure |
 | **Error Handling** | ✅ | No floating promises or unhandled rejections |
-| **Memory Management** | ✅ | Streaming export holds <50MB for 500k rows |
+| **Memory Management** | ✅ | Streaming export maintains constant memory for large exports |
 | **Authentication** | ✅ | JWT implemented with proper expiration handling |
 
 ---
@@ -830,9 +830,9 @@ The following new modules were reviewed and found to have no issues:
 
 2. **Issue #11 (Memory logging):** Memory tracking at 5000-row intervals is an intentional design choice for observability. Enterprise deployments may reduce to 25,000-row intervals for minimal overhead.
 
-3. **Performance Baseline:** 500k row exports:
-   - **Streaming (Issue #4 fixed):** ~80MB peak memory, 15-20s on standard hardware
-   - **Buffered:** 500MB+ peak memory, risk of OOM on large exports
+3. **Performance Baseline:** Large exports:
+   - **Streaming (Issue #4 fixed):** Constant memory usage, consistent performance
+   - **Buffered:** Linear memory growth, risk of OOM on large exports
 
 4. **Security:** JWT token lifetime (`JWT_EXPIRES_IN`) is set to 15 minutes. For enterprise use, consider:
    - Adding token refresh mechanisms

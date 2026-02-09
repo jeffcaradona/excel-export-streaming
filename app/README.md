@@ -141,7 +141,7 @@ Non-streaming Excel export through the BFF.
 **Query Parameters:**
 - `rowCount` (optional, default: 30000, max: 1,048,576) - Number of rows to export
 
-**Memory Profile:** See [Performance Comparison](../documentation/tutorial/04-why-streaming-wins.md#memory-efficiency-the-critical-difference) for detailed metrics.
+**Memory Profile:** See [Performance Comparison](../documentation/tutorial/04-why-streaming-wins.md#memory-efficiency-the-critical-difference) for more information.
 
 ## Error Handling
 

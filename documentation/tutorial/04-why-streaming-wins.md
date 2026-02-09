@@ -10,47 +10,45 @@ This chapter uses real data to help you make an informed decision about your exp
 
 ### Single Export Comparison
 
-When one user requests an export:
+When one user requests an export, streaming maintains constant memory usage while buffered memory grows linearly with dataset size:
 
 | Dataset Size | Streaming Memory | Buffered Memory | Buffered Risk Level |
 |--------------|------------------|-----------------|---------------------|
-| 1,000 rows | ~48 MB | ~50 MB | ✅ Safe |
-| 10,000 rows | ~52 MB | ~83 MB | ✅ Safe |
-| 50,000 rows | ~61 MB | ~241 MB | ⚠️ Caution |
-| 100,000 rows | ~68 MB | ~487 MB | ⚠️ Getting Risky |
-| 250,000 rows | ~74 MB | ~1,247 MB | ❌ Likely Issues |
-| 500,000 rows | ~78 MB | ~2,458 MB | ❌ OOM Risk |
-| 1,000,000 rows | ~79 MB | ~5,000 MB (est) | ❌ Will Crash |
+| Small datasets | Constant low usage | Minimal overhead | ✅ Safe |
+| Medium datasets | Constant low usage | Moderate growth | ✅ Safe |
+| Large datasets | Constant low usage | High memory usage | ⚠️ Caution |
+| Very large datasets | Constant low usage | Very high memory | ⚠️ Getting Risky |
+| Extremely large | Constant low usage | Approaching limits | ❌ Likely Issues |
 
-**Key Insight:** Streaming memory is constant (~50-80 MB regardless of size), while buffered memory grows linearly.
+**Key Insight:** Streaming memory is constant regardless of size, while buffered memory grows linearly.
 
 ### Memory Math
 
 **Streaming:** Only 1 row + metadata in memory at a time
 ```
-Memory = ~50 MB (constant overhead) + ~0.05 MB per million rows
+Memory = Constant overhead + minimal per-row cost
 ```
 
 **Buffered:** Entire dataset + workbook + buffer in memory
 ```
-Memory ≈ 40 MB + (3-4 KB per row × row count)
+Memory ≈ Base overhead + (significant per-row cost × row count)
 
-For 100,000 rows:
-Memory ≈ 40 MB + (0.004 MB × 100,000) = 40 + 400 = ~440 MB
+For large datasets:
+Memory grows linearly with row count
 ```
 
 ### When Do These Numbers Matter?
 
-**If max export < 50k rows:**
+**If max export is relatively small:**
 - Buffering is safe and simpler
 - Consider your actual usage patterns
 - Streaming adds complexity you don't need
 
-**If exports could exceed 50k rows:**
+**If exports are moderately large:**
 - Buffering becomes risky
 - **Streaming is strongly recommended**
 
-**If exports could exceed 100k rows:**
+**If exports are very large:**
 - Buffering is essentially off the table
 - **Streaming is mandatory**
 - Buffering will crash or cause degradation
@@ -59,26 +57,26 @@ Memory ≈ 40 MB + (0.004 MB × 100,000) = 40 + 400 = ~440 MB
 
 The critical issue isn't single exports—it's **multiple exports at the same time**:
 
-### Multiple Concurrent Exports (100k rows each)
+### Multiple Concurrent Exports
 
 | Concurrent Users | Streaming Memory | Buffered Memory | Server Status |
 |-----------------|------------------|-----------------|---------------|
-| 1 | ~68 MB | ~487 MB | ✅ Fine |
-| 2 | ~72 MB | ~974 MB | ✅ Fine |
-| 3 | ~76 MB | ~1.4 GB | ⚠️ Slow |
-| 5 | ~84 MB | ~2.4 GB | ⚠️ High Pressure |
-| 10 | ~102 MB | ~4.9 GB | ❌ Crash |
-| 20+ | ~150-200 MB | ❌ OOM | ❌ Crash |
+| Single user | Low constant | Moderate | ✅ Fine |
+| Few users | Low constant | Growing | ✅ Fine |
+| Several users | Low constant | High | ⚠️ Slow |
+| Many users | Low constant | Very high | ⚠️ High Pressure |
+| Heavy load | Moderate | Critical | ❌ Crash |
+| Very heavy load | Still moderate | ❌ OOM | ❌ Crash |
 
 **The Problem:**
 - Buffering doesn't scale with concurrent users
-- If buffering uses 487 MB per user, 5 concurrent users = 2.4 GB
-- Four GB servers can't handle realistic peak load
+- Memory usage multiplies with each concurrent request
+- Server memory limits are quickly exhausted
 - When someone says "We need more servers," they mean "We need to stream"
 
 **Streaming scales:**
-- Per-user overhead: ~3-5 MB (not 487 MB)
-- 50 concurrent users: ~150-200 MB total
+- Per-user overhead is minimal
+- Many concurrent users remain manageable
 - Limited by database connections, not memory
 - Infrastructure costs stay reasonable
 
@@ -98,22 +96,24 @@ Let's compare them across multiple dimensions.
 ## Memory Efficiency: The Critical Difference
 
 ### Test Setup
-- Server: Node.js v22+, 4 GB RAM limit
-- Database: MSSQL Server with `spGenerateData` stored procedure
-- Columns: 10 fields (integers, decimals, strings, dates, JSON)
+- Server: Node.js runtime with typical RAM limits
+- Database: MSSQL Server with test data stored procedure
+- Columns: Multiple fields with various data types
 - Single concurrent user
 
 ### Results
 
-| Row Count | Streaming Peak Memory | Buffered Peak Memory | Memory Difference | Buffered Status |
-|-----------|----------------------|---------------------|-------------------|-----------------|
-| 1,000     | 48 MB               | 49 MB               | +1 MB (2%)        | ✅ Safe         |
-| 10,000    | 52 MB               | 83 MB               | +31 MB (60%)      | ✅ Safe         |
-| 50,000    | 61 MB               | 241 MB              | +180 MB (295%)    | ⚠️ Caution      |
-| 100,000   | 68 MB               | 487 MB              | +419 MB (616%)    | ⚠️ High Risk    |
-| 250,000   | 74 MB               | 1,247 MB            | +1,173 MB (1585%) | ❌ Near Limit   |
-| 500,000   | 78 MB               | 2,458 MB            | +2,380 MB (3051%) | ❌ OOM Risk     |
-| 1,000,000 | 79 MB               | ~5,000 MB (estimate)| +4,921 MB         | ❌ Crash        |
+Streaming maintains constant memory usage across all dataset sizes, while buffered memory grows linearly:
+
+| Row Count | Streaming | Buffered | Memory Growth | Buffered Status |
+|-----------|-----------|----------|---------------|-----------------|
+| Small | Constant | Minimal | Low | ✅ Safe |
+| Medium | Constant | Moderate | Growing | ✅ Safe |
+| Large | Constant | Significant | High | ⚠️ Caution |
+| Very Large | Constant | Very High | Very High | ⚠️ High Risk |
+| Extremely Large | Constant | Critical | Extreme | ❌ Near Limit |
+| Massive | Constant | Beyond Limits | Unsustainable | ❌ OOM Risk |
+| Huge | Constant | System Crash | Fatal | ❌ Crash |
 
 ### Memory Growth Visualization
 
@@ -134,133 +134,57 @@ Memory (MB)
   |         ╱
   |     ╱
  500| ╱
-
-
-**Key Insight:** Even at modest load (5 users, 20k rows), streaming is **4-5x faster**.
-
-### Test: Heavy Load (50 Concurrent Users, 100k Rows)
-
-**Streaming (`/export/report`):**
-```bash
-npm run stress-test:heavy -- --rowCount 100000
 ```
 
-```
-Running 60s test @ http://localhost:3001/export/report?rowCount=100000
-50 connections
+**Pattern:** Streaming stays flat, buffered grows linearly with data size.
 
-Results:
-  Throughput:  43.2 req/sec
-  Latency:     p50: 890ms, p99: 1200ms
-  Errors:      0 (0%)
-  Timeouts:    0 (0%)
-  
-Memory (Server):
-  Start:       52 MB
-  Peak:        224 MB
-  End:         98 MB
-  
-Status: ✅ PASS
-```
+### Load Testing Results
 
-**Buffered (`/export/report-buffered`):**
-```bash
-npm run stress-test:heavy -- --rowCount 100000 --url /export/report-buffered
-```
+Under heavy concurrent load:
+- **Streaming** remains stable with consistent performance and no failures
+- **Buffered** experiences memory exhaustion, leading to crashes and failures
 
-```
-Running 60s test @ http://localhost:3001/export/report-buffered?rowCount=100000
-50 connections
-
-Results:
-  Throughput:  2.1 req/sec (before crash)
-  Latency:     p50: 8400ms, p99: 15000ms
-  Errors:      23 (46%)
-  Timeouts:    18 (36%)
-  
-Memory (Server):
-  Start:       52 MB
-  Peak:        3847 MB (then OOM)
-  Crash:       5 concurrent requests
-  
-Status: ❌ FAIL (OutOfMemoryError after 12 seconds)
-```
-
-**The Breaking Point:** At 50 concurrent users, buffering catastrophically fails due to memory exhaustion, while streaming handles the load effortlessly.
-
-### Test: Single User, 1M Rows
-
-**Streaming:**
-```
-Row Count:   1,000,000
-Duration:    18 minutes 22 seconds
-Memory Peak: 79 MB
-Status:      ✅ Success
-File Size:   42.3 MB
-```
-
-**Buffered:**
-```
-Row Count:   1,000,000
-Duration:    N/A
-Memory Peak: ~5 GB (estimate)
-Status:      ❌ Crash (OutOfMemoryError after 2 minutes)
-```
+With very large datasets:
+- **Streaming** successfully handles exports of any size
+- **Buffered** crashes due to OutOfMemory errors
 
 ## Cost Analysis: Cloud Hosting
 
-### Our Scenario: 100 concurrent users, peak export size 100k rows
+Streaming architecture significantly reduces infrastructure requirements:
 
 **Buffered Approach:**
-
-```
-Memory per export: 487 MB
-Concurrent exports: 100
-Total memory needed: 48.7 GB
-Add 50% headroom: 73 GB
-
-AWS EC2 instance: r6i.4xlarge (128 GB RAM, 16 vCPU)
-Cost: $1.008/hour × 730 hours = $736/month
-```
-
-Plus:
-- Monitoring for OOM errors
-- Auto-scaling complexity
-- Retry logic for failed exports
+- High memory per export
+- Linear scaling with concurrent users
+- Requires large server instances
+- Higher cloud hosting costs
+- Additional complexity for monitoring and auto-scaling
 
 **Streaming Approach:**
+- Minimal memory per export
+- Efficient scaling with concurrent users
+- Smaller server instances sufficient
+- Lower cloud hosting costs
+- Simpler infrastructure
 
-```
-Memory per export: ~3 MB
-Concurrent exports: 100
-Total memory needed: 300 MB
-Add 50% headroom: 450 MB
-
-AWS EC2 instance: t3.small (2 GB RAM, 2 vCPU)
-Cost: $0.0208/hour × 730 hours = $15/month
-```
-
-**Savings: $721/month (98% reduction)**
-
-Bottleneck becomes database connections (50 max), not memory. Database can scale independently.
+**Key Benefit:** Dramatic cost savings through reduced memory requirements. Bottleneck becomes database connections, not memory, allowing the database to scale independently.
 
 ## The Definitive Verdict
 
 ### When Buffering Is Acceptable
 
-- Row count **always** < 5,000
+- Row count is consistently small
 - Single concurrent user guaranteed
 - Development/testing environments
-- We need to manipulate entire dataset before sending (rare)
+- Need to manipulate entire dataset before sending (rare)
 
 ### When Streaming Is Required
 
-- Row count **ever** > 10,000
+- Row count can be large
 - Multiple concurrent users
-- Our production environments
+- Production environments
 - Data exists in database, doesn't need transformation
-- Our users might cancel mid-export
-- Memory/cost efficiency matters to us
+- Users might cancel mid-export
+- Memory/cost efficiency matters
 
 **Rule of Thumb:** If you don't have a **specific reason** to buffer, stream.
 
@@ -335,12 +259,12 @@ req.on('close', () => {
 
 | Dimension | Streaming | Buffered | Winner |
 |-----------|-----------|----------|--------|
-| **Memory (100k rows)** | 68 MB | 487 MB | 🏆 Streaming (7x better) |
-| **Memory (1M rows)** | 79 MB | ~5 GB | 🏆 Streaming (63x better) |
-| **Concurrent users** | 50+ | 3-5 | 🏆 Streaming (10x better) |
-| **Time to first byte** | 50-100ms | 2-10s | 🏆 Streaming (20-100x better) |
-| **Max dataset size** | Unlimited | ~100k rows | 🏆 Streaming |
-| **Server cost** | $15/mo | $736/mo | 🏆 Streaming (98% savings) |
+| **Memory usage** | Constant | Linear growth | 🏆 Streaming |
+| **Large datasets** | Constant | Very high | 🏆 Streaming |
+| **Concurrent users** | Many | Limited | 🏆 Streaming |
+| **Time to first byte** | Fast | Slower | 🏆 Streaming |
+| **Max dataset size** | Unlimited | Limited | 🏆 Streaming |
+| **Server cost** | Lower | Higher | 🏆 Streaming |
 | **Code complexity** | Event-driven | Sequential | 🤝 Comparable |
 | **Error handling** | Natural cancellation | Wasted work | 🏆 Streaming |
 

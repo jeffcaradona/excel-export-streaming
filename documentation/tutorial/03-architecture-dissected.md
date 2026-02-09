@@ -294,12 +294,10 @@ request.on('row', row => { /* process one row */ });
 5. **Repeat:** Loop for next row
 
 **Memory profile:**
-- First row: +15-20 MB (workbook metadata overhead)
-- Second row: +~5 KB (one row)
-- Third row: +~5 KB (one row)
-- ...
-- 1,000,000th row: Still ~5 KB per row
-- Total: ~50-80 MB constant (metadata + current row buffer)
+- First row: Small metadata overhead (workbook initialization)
+- Subsequent rows: Minimal per-row cost
+- Processing continues: Constant per-row cost
+- All rows: Memory stays constant (metadata + current row buffer)
 
 **Backpressure: Why it matters**
 

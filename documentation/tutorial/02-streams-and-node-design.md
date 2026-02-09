@@ -405,28 +405,30 @@ A common concern: "Doesn't JWT authentication add overhead to streaming?"
 
 ## Real-World Memory Measurements
 
-From our actual stress tests and documentation:
+From our actual testing:
 
 ### Streaming Export ([api/src/controllers/exportController.js](../../api/src/controllers/exportController.js))
 
-| Row Count | Peak Memory | Time    |
-|-----------|-------------|---------|
-| 10,000    | 52 MB       | 12s     |
-| 100,000   | 68 MB       | 115s    |
-| 1,000,000 | 79 MB       | 18min   |
+| Row Count | Peak Memory | Time Pattern |
+|-----------|-------------|--------------|
+| Small     | Low, constant | Fast |
+| Medium    | Low, constant | Moderate |
+| Large     | Low, constant | Proportional to size |
+| Very Large| Low, constant | Longer but stable |
 
-**Memory increase from 10k → 1M rows: Only 27 MB (constant!)**
+**Memory stays constant regardless of dataset size**
 
 ### Buffered Export (Comparison)
 
-| Row Count | Peak Memory | Time    | Status |
-|-----------|-------------|---------|--------|
-| 10,000    | 48 MB       | 8s      | ✅ OK  |
-| 100,000   | 487 MB      | 65s     | ⚠️ High |
-| 500,000   | 2.4 GB      | 340s    | ❌ OOM Risk |
-| 1,000,000 | ~5 GB       | N/A     | ❌ Crash |
+| Row Count | Peak Memory | Time Pattern | Status |
+|-----------|-------------|--------------|--------|
+| Small     | Low         | Fast         | ✅ OK  |
+| Medium    | Moderate    | Moderate     | ⚠️ Caution |
+| Large     | High        | Slower       | ⚠️ High Risk |
+| Very Large| Critical    | Very slow    | ❌ OOM Risk |
+| Massive   | Fatal       | N/A          | ❌ Crash |
 
-**Memory increase from 10k → 100k: 10x growth (linear)**
+**Memory grows linearly with dataset size**
 
 ## Key Principles
 
