@@ -91,3 +91,36 @@ See the existing test harness in `/shared/tests` for examples of how to stub the
 
 ---
 Generated README for the request-timing system.
+
+## Small helper script
+
+You can toggle the admin API from the command line using the included helper script `shared/bin/toggle-timing.js`.
+
+Usage examples (from repo root):
+
+```bash
+# check state
+node shared/bin/toggle-timing.js get
+
+# toggle
+node shared/bin/toggle-timing.js toggle
+
+# turn on
+node shared/bin/toggle-timing.js on
+
+# turn off
+node shared/bin/toggle-timing.js off
+```
+
+The script will:
+
+- Use `JWT_SECRET` to generate a short-lived token via the repo `shared` JWT helper if present.
+- Otherwise use `ADMIN_TOKEN` environment variable directly.
+- Read `ADMIN_URL` and `ADMIN_PATH` environment variables to override the target location.
+
+Example (generate a token and toggle):
+
+```bash
+JWT_SECRET=... node shared/bin/toggle-timing.js toggle
+```
+

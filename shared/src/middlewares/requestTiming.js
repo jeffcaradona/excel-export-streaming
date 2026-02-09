@@ -1,9 +1,10 @@
 // shared/src/express.js
 import { performance } from "node:perf_hooks";
-import { console } from "node:console";
+
 import process from "node:process";
 import {Router} from "express";
 import { timing } from "../timingStore.js";
+import console from "node:console";
 
 /**
  * Express middleware that measures "Node received request" -> "Node finished sending response".

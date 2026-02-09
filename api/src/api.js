@@ -1,8 +1,13 @@
 import express from 'express';
 import helmet from 'helmet';
 import process from 'node:process';
+
 import { debugAPI } from '../../shared/src/debug.js';
 import exportRouter from './routes/export.js';
+import {
+  createRequestTimingMiddleware,
+  createTimingToggleRouter,
+} from '../../shared/src/index.js';
 
 const app = express();
 
@@ -17,6 +22,17 @@ app.use((req, _res, next) => {
   debugAPI(`${req.method} ${req.url}`);
   next();
 });
+
+// Request timing middleware (cheap when disabled). Keep registered always.
+app.use(
+  createRequestTimingMiddleware({
+    logger: { info: debugAPI },
+    getMeta: (req) => ({ request_id: req.get('x-request-id') }),
+  }),
+);
+
+// Admin router to toggle request timing at runtime (protect with ADMIN_TOKEN)
+app.use('/_admin', createTimingToggleRouter({ requireToken: true, tokenEnv: 'ADMIN_TOKEN' }));
 
 // Mount routers
 app.use('/export', exportRouter);

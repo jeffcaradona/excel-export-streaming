@@ -6,5 +6,4 @@ export * from "./middlewares/jwtAuth.js";
 export * from "./middlewares/requestTiming.js";
 export * from "./timingStore.js";
 export * from "./signals.js";
-export * from "./express.js";
 
