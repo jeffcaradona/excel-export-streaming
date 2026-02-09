@@ -1,12 +1,18 @@
-# Architecture Dissected: A Streaming Pipeline Walkthrough
+# Building Your Own Streaming Export: Step-by-Step Implementation
 
 ## Introduction
 
-In [02-streams-and-node-design.md](02-streams-and-node-design.md), we learned about Node.js streams and why they maintain constant memory. Now let's walk through the **actual implementation** of our streaming architecture.
+In [02-streams-and-node-design.md](02-streams-and-node-design.md), we learned stream concepts. Now let's **implement a streaming export** from scratch. Whether you're building your first export or migrating from buffering, this chapter walks through each component you need to build.
 
-## The Complete Pipeline
+**By the end, you'll have:**
+- A streaming database query
+- ExcelJS writing directly to HTTP
+- Proper error handling and backpressure
+- A working export that handles millions of rows
 
-Here's the full data flow from database to browser:
+## The Architecture: What We're Building
+
+Here's the complete data flow from database to browser:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -91,240 +97,309 @@ BROWSER RECEIVES COMPLETE .xlsx FILE
 report-2026-02-07-143022.xlsx
 ```
 
-## Code Walkthrough: Streaming Export
+## Implementation: Building the Export From Scratch
 
-Let's dissect the core implementation of our streaming export.
+Now let's build this step-by-step. We'll use Express.js with MSSQL (but this works with PostgreSQL, MySQL, etc.)
 
-### Phase 1: Initialization
+### Step 1: Set Up Your Route and Controller
+
+First, create an Express route handler. This will be your main export endpoint:
 
 ```javascript
+// routes/export.js
+import { Router } from 'express';
+import { jwtAuth } from '../middlewares/jwtAuth.js';
+import { exportController } from '../controllers/exportController.js';
+
+const router = Router();
+
+// GET /export/report?rowCount=100000
+router.get('/report', jwtAuth, exportController.streamReportExport);
+
+export default router;
+```
+
+**What we're doing:**
+- `jwtAuth` middleware validates user before streaming starts
+- Route accepts `rowCount` query parameter  
+- Controller handles the actual streaming logic
+
+### Step 2: Validate Input and Set Response Headers
+```javascript
 export const streamReportExport = async (req, res, next) => {
-  // Performance tracking
+  // Step 2a: Validate and log
   const startTime = Date.now();
-  const memoryLogger = createMemoryLogger(process, debugAPI);
   let rowCount = 0;
   let streamRequest = null;
   let streamError = false;  // Prevent double error handling
   
-  // Validate row count (default: 30,000, max: 1,048,576)
+  // Validate row count parameter (1 to 1,048,576)
   const requestedRows = validateRowCount(req.query.rowCount || DEFAULT_ROW_COUNT);
+  if (!requestedRows) {
+    return res.status(400).json({ error: 'Invalid row count' });
+  }
   
-  debugAPI(`Starting streaming Excel export (${requestedRows} rows requested)`);
-  memoryLogger('Export');  // Baseline memory snapshot
+  console.log(`Starting export: ${requestedRows} rows requested`);
 ```
 
-**Key Points:**
-- `createMemoryLogger()` from [shared/src/memory.js](../../shared/src/memory.js) tracks RSS, heap, external memory
-- `validateRowCount()` ensures input is within safe bounds (1 to 1,048,576)
-- `streamError` flag prevents race conditions in error handlers
+**What's happening:**
+- Validate input before doing any work
+- Set `streamError` flag to track if we've already reported an error
+- Store references we'll need later (`streamRequest`)
 
-### Phase 2: HTTP Response Setup
+### Step 3: Configure HTTP Response Headers
 
 ```javascript
-  // Configure browser download
-  const filename = generateTimestampedFilename();  // report-2026-02-07-143022.xlsx
+  // Step 3: Configure browser download
+  const filename = `report-${new Date().toISOString()}.xlsx`;
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 ```
 
-**Key Points:**
-- `Content-Disposition: attachment` triggers browser download dialog
-- Filename is sanitized in [api/src/utils/filename.js](../../api/src/utils/filename.js) to prevent path traversal
-- Headers must be set **before** writing any data
+**Why this matters:**
+- `Content-Type` tells browser it's an Excel file
+- `Content-Disposition: attachment` triggers download dialog
+- **Headers must be set before any data is written**
 
-### Phase 3: Excel Workbook Setup (The Critical Part)
+### Step 4: Create Streaming Excel Workbook
 
 ```javascript
-  // STREAMING WORKBOOK - writes directly to HTTP response
+  // Step 4: THIS IS THE KEY - Create workbook that writes to HTTP response (not memory)
   const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
-    stream: res,              // ← THE KEY: Write to response, not memory buffer
-    useStyles: false,         // Skip styles to reduce overhead
-    useSharedStrings: false   // Disable shared strings for streaming
+    stream: res,              // ← Write directly to HTTP response
+    useStyles: false,         // Skip styles (reduces overhead)
+    useSharedStrings: false   // Disable shared strings  
   });
   
   const worksheet = workbook.addWorksheet('Report');
-  worksheet.columns = REPORT_COLUMNS;  // Define column schema
+  worksheet.columns = [
+    { header: 'ID', key: 'id', width: 10 },
+    { header: 'Name', key: 'name', width: 30 },
+    { header: 'Amount', key: 'amount', width: 15 },
+    // Add your columns here
+  ];
 ```
 
-**Why This Matters:**
+**Compare buffering vs. streaming:**
 
-**Traditional (buffered):**
+**If you were buffering (don't do this for large exports):**
 ```javascript
-const workbook = new ExcelJS.Workbook();  // Creates in-memory workbook
-const buffer = await workbook.xlsx.writeBuffer();  // Generates entire file in memory
-res.send(buffer);  // Sends complete buffer
+const workbook = new ExcelJS.Workbook();  // In-memory workbook
+const buffer = await workbook.xlsx.writeBuffer();  // Entire file in memory!
+res.send(buffer);  // Send complete buffer
 ```
-Memory: Entire file exists in Node.js process memory
+Memory: Entire file buffered in RAM
 
-**Streaming:**
+**With streaming (what we're doing):**
 ```javascript
 const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res });
-worksheet.addRow(data).commit();  // Writes bytes directly to res
+// Bytes go directly to client as they're written
 ```
-Memory: Only current row + small write buffer
+Memory: Only one row + small write buffer at a time
 
-### Phase 4: Database Connection & Streaming Query
+### Step 5: Enable Streaming from Your Database
 
 ```javascript
-  // Get connection from pool
-  const pool = await getConnectionPool();
-  streamRequest = pool.request();
-  streamRequest.stream = true;  // ← CRITICAL: Enables streaming mode
-  
-  // Execute stored procedure
-  streamRequest.input("RowCount", mssql.Int, requestedRows);
-  streamRequest.execute('spGenerateData').catch((err) => {
-    // Error handler for execute() promise rejection
-    if (streamError) return;
-    streamError = true;
-    debugAPI("Execute failed:", err);
-    if (res.headersSent) {
-      res.destroy(err);  // Abort in-flight response
-    } else {
-      // Send error response
-      const dbError = new DatabaseError('Database error occurred', err);
-      res.status(dbError.status).json({ error: { message: dbError.message, code: dbError.code }});
-    }
-    if (streamRequest) {
-      streamRequest.cancel();  // Cancel database query
-    }
-  });
+  // Step 5: Connect to database and enable streaming
+  try {
+    const pool = await getConnectionPool();  // Your connection pool
+    streamRequest = pool.request();
+    
+    // CRITICAL: Enable streaming mode
+    streamRequest.stream = true;  //  ← This enables 'row' events
+    
+    // Set parameters
+    streamRequest.input('RowCount', mssql.Int, requestedRows);
+    
+    // Execute query (returns immediately, rows come via events)
+    streamRequest.execute('spGenerateData');
+  } catch (err) {
+    // Handle connection errors
+    res.status(500).json({ error: 'Database connection failed' });
+    return;
+  }
 ```
 
-**Key Points:**
+**What `stream: true` does:**
 
-**Without `stream: true`:**
+**Without it (traditional buffering):**
 ```javascript
-const result = await request.execute('spGenerateData');
-const rows = result.recordset;  // ALL rows loaded into memory
+const result = await request.query('SELECT * FROM large_table');
+// Waits here until ALL rows returned
+const rows = result.recordset;  // All rows in array
 ```
 
-**With `stream: true`:**
+**With `stream: true` (streaming):**
 ```javascript
 request.stream = true;
-request.execute('spGenerateData');
-// Returns immediately, emits 'row' events as data arrives
+request.query('SELECT * FROM large_table');
+// Returns immediately
+request.on('row', row => { /* process one row */ });
+// Rows arrive via events as they're fetched from database
 ```
 
-**Error Handling Strategy:**
-- If error occurs **before** headers sent → send JSON error response
-- If error occurs **after** headers sent → destroy response (browser sees incomplete file)
-- Always cancel database request to free resources
-
-### Phase 5: Event Handlers (The Heart of Streaming)
-
-#### 'row' Event: Process Each Row
+### Step 6: Process Rows as They Arrive
 
 ```javascript
+  // Step 6: Handle each row as it arrives from database
   streamRequest.on('row', (row) => {
     rowCount++;
     
-    // Transform database row to Excel format
-    // Maps DB columns (Id, ColInt, ColVarchar, etc.) to Excel values
-    worksheet.addRow(mapRowToExcel(row)).commit();
+    // Transform data from database format to Excel format
+    const excelRow = {
+      id: row.Id,
+      name: row.Name,
+      amount: row.Amount,
+      // Map your columns here
+    };
     
-    // Memory tracking every 5,000 rows
+    // Write row to Excel stream immediately
+    worksheet.addRow(excelRow).commit();
+    
+    // Optional: Log progress every 5,000 rows
     if (rowCount % 5000 === 0) {
-      memoryLogger(`Export - ${rowCount} rows`);
-      debugAPI(`Processed ${rowCount} rows`);
+      console.log(`Processed ${rowCount} rows...`);
+    }
+  });
+  
+  // Step 7: Manage backpressure - pause database if HTTP buffer gets full
+  // This prevents memory from growing if client is slow
+  const checkBackpressure = () => {
+    // writableLength = bytes waiting to be sent to client
+    // writableHighWaterMark = typical/recommended buffer size
+    if (res.writableLength > res.writableHighWaterMark) {
+      streamRequest.pause();  // Pause database query
+      console.log('Backpressure: paused database query (HTTP buffer full)');
+    }
+  };
+  
+  // Check backpressure after each row
+  streamRequest.on('row', checkBackpressure);
+  
+  // Resume when client catches up
+  res.on('drain', () => {
+    if (streamRequest && streamRequest.paused) {
+      streamRequest.resume();
+      console.log('Backpressure released: resumed database query');
     }
   });
 ```
 
-**What Happens:**
-1. SQL Server sends row → MSSQL driver emits `'row'` event
-2. `mapRowToExcel(row)` transforms data (see [api/src/utils/columnMapper.js](../../api/src/utils/columnMapper.js))
-3. `worksheet.addRow()` adds row to worksheet
-4. `.commit()` **immediately writes** row to underlying stream (res)
-5. Row is garbage collected, memory freed
-6. Loop repeats for next row
+**How row processing works:**
 
-**Memory Profile at This Stage:**
+1. **Row arrives:** Database sends one row, MSSQL driver emits `'row'` event
+2. **Transform:** Map from database column names to Excel format
+3. **Write:** `worksheet.addRow().commit()` writes row to Excel stream
+4. **Discard:** Row is garbage collected, memory freed
+5. **Repeat:** Loop for next row
+
+**Memory profile:**
+- First row: +15-20 MB (workbook metadata overhead)
+- Second row: +~5 KB (one row)
+- Third row: +~5 KB (one row)
+- ...
+- 1,000,000th row: Still ~5 KB per row
+- Total: ~50-80 MB constant (metadata + current row buffer)
+
+**Backpressure: Why it matters**
+
+Without backpressure, what happens when client is slow (3G network)?
+
 ```
-First row:   52 MB  (baseline + workbook overhead)
-5,000 rows:  54 MB  (+2 MB)
-50,000 rows: 61 MB  (+9 MB)
-500,000 rows: 73 MB (+21 MB)
-1M rows:     79 MB  (+27 MB)
+Database: Sends 100 rows/second
+HTTP: Can only send 10 rows/second to slow client
+Result: 90 rows/second accumulate in memory!
 ```
 
-Memory grows **logarithmically** (due to workbook metadata), not linearly.
+With backpressure:
+```
+Database waits → Only 1-2 rows in memory → Adapt to client speed
+```
 
-#### 'error' Event: Handle Stream Failures
+**Step 7-9: Handle Completion and Errors
+
+### Phase 6: Client Disconnect Handling
 
 ```javascript
+  // Step 7: Finalize when all rows are processed
+  streamRequest.on('done', async () => {
+    try {
+      console.log(`All rows received from database (${rowCount} rows), finalizing Excel...`);
+      
+      // CRITICAL: Excel file needs closing tags written
+      await worksheet.commit();  // Flush any remaining worksheet data
+      await workbook.commit();   // Write Excel footer/metadata
+      
+      // Log metrics
+      const duration = Date.now() - startTime;
+      console.log(`Export complete: ${rowCount} rows in ${duration}ms`);
+      
+      // Close HTTP response - browser receives complete file
+      res.end();
+    } catch (err) {
+      if (streamError) return;  // Don't handle twice
+      streamError = true;
+      console.error('Error finalizing workbook:', err);
+      if (res.headersSent) {
+        // Headers already sent, can't send error response - close connection
+        res.destroy(err);
+      } else {
+        // Haven't sent headers yet, send error
+        res.status(500).json({ error: 'Failed to generate Excel file' });
+      }
+    }
+  });
+```
+
+**Why `commit()` is important:**
+- ExcelJS buffers data internally
+- `worksheet.commit()` flushes buffered worksheet rows to the stream
+- `workbook.commit()` writes the Excel file's closing XML tags
+- Without these, the file is incomplete
+- Must be `await`ed to ensure all data is written before closing
+
+### Step 8: Handle Database Errors
+
+```javascript
+  // Step 8: Handle SQL errors (connection lost, timeout, etc.)
   streamRequest.on('error', (err) => {
-    if (streamError) return;  // Prevent double-handling
+    if (streamError) return;  // Already handling an error
     streamError = true;
-    debugAPI("SQL stream error:", err);
+    console.error('SQL stream error:', err);
     
     if (res.headersSent) {
-      res.destroy(err);  // Abort response
+      // Headers already sent - close the connection
+      res.destroy(err);
     } else {
-      const dbError = new DatabaseError('Database error occurred', err);
-      res.status(dbError.status).json({ error: { message: dbError.message, code: dbError.code }});
+      // Haven't sent headers - send error response
+      res.status(500).json({ error: 'Database error occurred' });
     }
+    
+    // Cancel any pending database query
     if (streamRequest) {
       streamRequest.cancel();
     }
   });
 ```
 
-**When This Fires:**
+**When this fires:**
 - Database connection lost mid-stream
-- Query timeout (30 seconds by default)
-- SQL execution error
+- Query timeout (default: 30 seconds)
+- SQL syntax or execution error
 - Network interruption
 
-#### 'done' Event: Finalize Excel File
+The `streamError` flag prevents "trying to set headers twice" errors if multiple things fail simultaneously.
+
+### Step 9: Handle Client Disconnect
 
 ```javascript
-  streamRequest.on('done', async () => {
-    try {
-      debugAPI(`SQL stream complete. Total rows: ${rowCount}`);
-      
-      // CRITICAL: Finalize Excel file structure
-      await worksheet.commit();  // Flush worksheet data
-      await workbook.commit();   // Write Excel footer/metadata
-      
-      // Metrics
-      const duration = Date.now() - startTime;
-      debugAPI(`Export complete: ${rowCount} rows in ${duration}ms`);
-      memoryLogger('Export - Complete');
-      memoryLogger.logPeakSummary('Export - Peak');
-      
-      // Close HTTP response
-      res.end();
-    } catch (err) {
-      if (streamError) return;
-      streamError = true;
-      debugAPI("Error finalizing workbook:", err);
-      if (res.headersSent) {
-        res.destroy(err);
-      } else {
-        const exportError = new ExportError('Failed to generate Excel file');
-        res.status(exportError.status).json({ error: { message: exportError.message, code: exportError.code }});
-      }
-    }
-  });
-```
-
-**What Happens:**
-1. All rows received from database
-2. `worksheet.commit()` flushes any buffered worksheet data
-3. `workbook.commit()` writes Excel file closing tags (XML structure)
-4. `res.end()` closes HTTP response → browser receives complete file
-5. Memory logger prints peak memory summary
-
-### Phase 6: Client Disconnect Handling
-
-```javascript
+  // Step 9: User closes browser or connection drops
   req.on('close', () => {
-    if (!res.writableEnded) {
-      debugAPI(`Client disconnected after ${rowCount} rows`);
-      memoryLogger.logPeakSummary('Export - Peak (Disconnected)');
+    if (rowCount > 0 && !res.writableEnded) {
+      console.log(`Client disconnected after ${rowCount} rows`);
       
       // Cancel database query to free resources
+      // Otherwise, database keeps sending data that nobody's listening to
       if (streamRequest) {
         streamRequest.cancel();
       }
@@ -332,12 +407,12 @@ Memory grows **logarithmically** (due to workbook metadata), not linearly.
   });
 ```
 
-**Why This Matters:**
+**Why this matters:**
 - User closes browser tab mid-export
 - Network interruption
-- Browser timeout
+- Browser timeout / refresh
 
-Without this handler, database query continues generating data that goes nowhere, wasting server resources.
+Without this handler, database continues generating data that goes nowhere. Canceling the query frees database connections and prevents wasted server work.
 
 ## Supporting Components
 
