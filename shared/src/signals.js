@@ -1,21 +1,12 @@
 // shared/src/signals.js
-import { timing } from "./timingStore.js";
+// Signal-based toggling removed: prefer the admin router (`createTimingToggleRouter`).
+// Keep a compatible export so existing callers won't crash, but make it a no-op
+// that logs a short deprecation/notice message.
 import { console } from "node:console";
-import process from "node:process";
 
-export function registerTimingSignalToggle({
-  signal = "SIGUSR2",
-  logger = console,
-} = {}) {
-  try {
-    process.on(signal, () => {
-      const v = timing.toggle();
-      logger.log?.(`[timing] ${v ? "ENABLED" : "DISABLED"} via ${signal}`);
-    });
-  } catch (err) {
-    // Some platforms may throw for unsupported signals
-    logger.warn?.(
-      `[timing] signal toggle not available (${signal}): ${err?.message ?? err}`,
-    );
-  }
+export function registerTimingSignalToggle({ logger = console } = {}) {
+  logger?.warn?.(
+    "[timing] signal toggle disabled: use createTimingToggleRouter admin endpoint instead",
+  );
+  return () => {};
 }

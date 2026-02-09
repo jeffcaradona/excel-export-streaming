@@ -56,8 +56,6 @@ app.use(
 
 if (process.env.TIMING_ENABLED === "true") timing.enable();
 
-registerTimingSignalToggle({ signal: "SIGUSR2" });
-
 app.use(
   "/_admin",
   createTimingToggleRouter({ requireToken: true, tokenEnv: "ADMIN_TOKEN" })
@@ -76,8 +74,8 @@ app.listen(3000);
   - `options.requireToken` — boolean; when true the router will require a token header for toggling.
   - `options.tokenEnv` — environment variable name containing the token.
 
-- `registerTimingSignalToggle(options)`
-  - `options.signal` — signal name to listen for (e.g. `SIGUSR2`). Note: signal support is limited on Windows.
+- `registerTimingSignalToggle(options)` — deprecated/no-op
+  - Signal-based toggling has been removed from this repo. Use `createTimingToggleRouter` for runtime toggling via HTTP.
 
 - `timing` — toggle object exposing `.enable()`, `.disable()`, and `.isEnabled()` to check or change state at runtime.
 

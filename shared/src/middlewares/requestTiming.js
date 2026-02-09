@@ -2,8 +2,8 @@
 import { performance } from "node:perf_hooks";
 import { console } from "node:console";
 import process from "node:process";
-import express from "express";
-import { timing } from ".timingStore.js";
+import {Router} from "express";
+import { timing } from "../timingStore.js";
 
 /**
  * Express middleware that measures "Node received request" -> "Node finished sending response".
@@ -54,7 +54,7 @@ export function createTimingToggleRouter({
   headerName = "x-admin-token",
   allowFromLocalhostOnly = false,
 } = {}) {
-  const router = express.Router();
+  const router = Router();
 
   router.post("/timing/:state", (req, res) => {
     if (allowFromLocalhostOnly) {
