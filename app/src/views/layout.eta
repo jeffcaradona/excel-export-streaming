@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title><%= it.title %></title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel='stylesheet' href='/css/bootstrap.min.css'>
+  <link rel='stylesheet' href='/css/dataTables.bootstrap5.min.css'>
+  <link rel='stylesheet' href='/stylesheets/style.css' />
+
+</head>
+
+<body>
+  <div class="container">
+    <div class="row">
+      <div class="col-md-12">
+        <%~ it.body %>
+      </div>
+    </div>
+  </div>
+</body>
+<footer>
+  <script type="importmap">
+  {
+    "imports": {
+      "jquery": "/esm/jquery/jquery.module.min.js",
+      "datatables.net": "/esm/datatables/dataTables.min.mjs",
+      "datatables.net-bs5": "/esm/datatables-bs5/dataTables.bootstrap5.min.mjs"
+    }
+  }
+  </script>
+  <script type="module" src="/javascripts/index.js"></script>
+</footer>
+
+</html>

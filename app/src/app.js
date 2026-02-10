@@ -1,30 +1,62 @@
 /**
  * BFF Express application — middleware stack, routes, error handling.
- *
- * Mirrors the API's api.js structure:
- *   1. Security (helmet)
- *   2. CORS (BFF controls policy)
- *   3. Body parsing
- *   4. Request logging
- *   5. Routes
- *   6. Health check
- *   7. 404 handler
- *   8. Global error handler (last)
+ * Routes requests through a configurable middleware chain with
+ * security, CORS, logging, and error handling.
  */
+
+// ── Imports and Dependencies ────────────────────────────────────────────────
+import createError from "http-errors";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import { Eta } from "eta";
+import cookieParser from "cookie-parser";
+
 import { debugApplication } from '../../shared/src/debug.js';
 import { getEnv } from './config/env.js';
-import exportsRouter from './routes/exports.js';
+import router from "./routes/router.js";
+import { registerStatic } from "./middlewares/staticAssets.js";
+import { renderError } from "./middlewares/app.js";
+
+// ── Application Setup ───────────────────────────────────────────────────────
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const env = getEnv();
 const app = express();
 
-// ── 1. Security headers ─────────────────────────────────────────────────────
-app.use(helmet());
+// ── View Engine Configuration ───────────────────────────────────────────────
+const viewsPath = path.join(__dirname,  "views");
+const eta = new Eta({ views: viewsPath });
+app.engine("eta", (filePath, options, callback) => {
+  const templateName = path.basename(filePath, ".eta");
+  try {
+    const html = eta.render(templateName, options);
+    callback(null, html);
+  } catch (err) {
+    callback(err);
+  }
+});
 
-// ── 2. CORS — BFF is the frontend's API gateway ────────────────────────────
+app.set("views", viewsPath);
+app.set("view engine", "eta");
+
+// ── Middleware Stack ────────────────────────────────────────────────────────
+// Security headers — allow the inline importmap for ESM loading
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        "script-src": ["'self'", "'sha256-lABFLvyf4oDsjVqUMFH2RMLyppqgvWWAdK0nUWvN4oY='"],
+      },
+    },
+  }),
+);
+
+// CORS — BFF is the frontend's API gateway
 // Only the configured origin may call through the BFF.
 app.use(
   cors({
@@ -34,47 +66,38 @@ app.use(
   }),
 );
 
-// ── 3. Body parsing (for potential future POST endpoints) ───────────────────
+// Body parsing (for potential future POST endpoints)
 app.use(express.json());
 
-// ── 4. Request logging ──────────────────────────────────────────────────────
+// Request logging
 app.use((req, _res, next) => {
   debugApplication(`${req.method} ${req.url}`);
   next();
 });
 
-// ── 5. Routes ───────────────────────────────────────────────────────────────
-app.use('/exports', exportsRouter);
+app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
 
-// ── 6. Health check — lightweight, no upstream dependency ───────────────────
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+// Static assets
+registerStatic(app, __dirname);
 
-// ── 7. 404 handler ──────────────────────────────────────────────────────────
+// ── Routes ──────────────────────────────────────────────────────────────────
+app.use('/', router);
+
+// ── Error Handling ──────────────────────────────────────────────────────────
+// Catch 404 and forward to error handler
 app.use((_req, res) => {
   res.status(404).json({
     error: { message: 'Not found', code: 'NOT_FOUND' },
   });
 });
 
-// ── 8. Global error handler — must be registered last ───────────────────────
+// Global error handler — must be registered last
 // eslint-disable-next-line no-unused-vars
-app.use((err, _req, res, _next) => {
-  debugApplication('Error:', err);
-
-  const statusCode = err.status || 500;
-  const isDevelopment = env.NODE_ENV === 'development';
-
-  const errorResponse = {
-    error: {
-      message: isDevelopment ? err.message : 'Internal server error',
-      code: err.code || 'INTERNAL_ERROR',
-      stack: isDevelopment ? err.stack : undefined,
-    },
-  };
-
-  res.status(statusCode).json(errorResponse);
+app.use(function (_req, _res, next) {
+  next(createError(404));
 });
+
+app.use(renderError);
 
 export default app;

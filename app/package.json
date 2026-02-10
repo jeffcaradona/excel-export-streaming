@@ -8,10 +8,17 @@
     "dev": "node --env-file=../.env --watch src/server.js"
   },
   "dependencies": {
+    "bootstrap": "^5.3.8",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
+    "datatables.net": "^2.3.7",
+    "datatables.net-bs5": "^2.3.7",
+    "eta": "^4.5.1",
     "express": "^5.2.1",
     "helmet": "^8.1.0",
+    "http-error": "^0.0.6",
     "http-proxy-middleware": "^3.0.5",
+    "jquery": "^4.0.0",
     "zod": "^4.3.6"
   }
 }
