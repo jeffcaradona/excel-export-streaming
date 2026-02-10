@@ -1,16 +1,14 @@
+USE DB
+GO
+
 DECLARE @RC int;
 DECLARE @RowCount int;
 
 
-SET @RowCount = 10000000;
+SET @RowCount = 10000;
 
 EXECUTE @RC = [dbo].[spGenerateData] 
    @RowCount
-
-
-PRINT CONCAT(N'Return Code: ', CAST(@RC AS NVARCHAR(10)));
-GO
-
 
 /*
 Test ID: 1514cd6d-8b12-4790-bb44-2baef137388e
@@ -26,3 +24,27 @@ Client Seconds/Iteration (Avg): 0.0027
 Logical Reads/Iteration (Avg): ---
 
 */
+PRINT CONCAT(N'Return Code: ', CAST(@RC AS NVARCHAR(10)));
+GO
+
+
+DECLARE @RC int;
+DECLARE @RowCount int;
+
+-- Test spPagedData with pagination
+PRINT N'Testing spPagedData...';
+DECLARE @PageNumber int = 1;
+DECLARE @PageSize int = 100;
+
+SET @RowCount = 10000;
+
+EXECUTE @RC = [dbo].[spPagedData]
+   @PageNumber = @PageNumber,
+   @PageSize = @PageSize,
+   @RowCount = @RowCount;
+
+PRINT CONCAT(N'Return Code: ', CAST(@RC AS NVARCHAR(10)));
+PRINT CONCAT(N'Page: ', @PageNumber, N', Page Size: ', @PageSize);
+GO
+
+
