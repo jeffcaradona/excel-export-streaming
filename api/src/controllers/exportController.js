@@ -1,4 +1,6 @@
 import process from 'node:process';
+import { pipeline } from 'node:stream/promises';
+import { Writable } from 'node:stream';
 import ExcelJS from 'exceljs';
 import mssql from 'mssql';
 import { debugAPI } from "../../../shared/src/debug.js";
@@ -7,7 +9,7 @@ import { getConnectionPool } from '../services/mssql.js';
 import { generateTimestampedFilename } from '../utils/filename.js';
 import { REPORT_COLUMNS, mapRowToExcel } from '../utils/columnMapper.js';
 import { DEFAULT_ROW_COUNT, validateRowCount } from '../config/export.js';
-import { ExportError, DatabaseError } from '../utils/errors.js';
+import { DatabaseError } from '../utils/errors.js';
 
 /**
  * STREAMING EXPORT CONTROLLER
@@ -34,6 +36,9 @@ import { ExportError, DatabaseError } from '../utils/errors.js';
  * Memory-efficient export that streams rows from database directly to the browser.
  * No data is buffered in memory - each row is processed and written immediately.
  * 
+ * Uses node:stream pipeline() with mssql's toReadableStream() for clean
+ * stream-based data flow with automatic error propagation and cleanup.
+ * 
  * Query Parameters:
  *   - rowCount: Number of rows to export (default: 30000, max: 1000000)
  *     Example: GET /export/report?rowCount=50000
@@ -47,17 +52,14 @@ import { ExportError, DatabaseError } from '../utils/errors.js';
  *   1. Validate row count from query parameter
  *   2. Set HTTP response headers (Excel file download)
  *   3. Create ExcelJS streaming workbook (writes directly to response stream)
- *   4. Connect to MSSQL and execute stored procedure in streaming mode
- *   5. For each row from database:
- *      - Map database columns to Excel format
- *      - Write to worksheet and commit immediately
- *      - Track row count and memory usage
- *   6. When all rows received, finalize workbook and close response
+ *   4. Connect to MSSQL and get a Readable stream via toReadableStream()
+ *   5. pipeline() streams rows through a Writable that maps each row to Excel
+ *   6. When pipeline completes, finalize workbook and close response
  *   7. Log peak memory usage and performance metrics
  * 
  * Error Handling:
- *   - Database stream errors: Log and attempt to send error response if headers not sent
- *   - Client disconnect: Cancel database request and cleanup
+ *   - Pipeline errors (database/stream): Caught in single try/catch, no guard flag needed
+ *   - Client disconnect: Cancel database request, destroy readable stream
  *   - Workbook finalization errors: Attempt error response, otherwise stream fails gracefully
  * 
  * @param {import('express').Request} req - Express request object (query.rowCount optional)
@@ -70,8 +72,8 @@ export const streamReportExport = async (req, res, next) => {
   const startTime = Date.now();
   const memoryLogger = createMemoryLogger(process, debugAPI);
   let rowCount = 0;
-  let streamRequest = null;
-  let streamError = false; // Guard against multiple simultaneous error handlers
+  let request = null;
+  let dbStream = null;
   
   // Get and validate row count from query parameter
   // validateRowCount() ensures value is between MIN_ROW_COUNT and MAX_ROW_COUNT
@@ -104,150 +106,66 @@ export const streamReportExport = async (req, res, next) => {
     const worksheet = workbook.addWorksheet('Report');
     worksheet.columns = REPORT_COLUMNS; // Define columns from schema
     
-    // RESPONSE STREAM ERROR HANDLER
-    // If the client disconnects and a write is attempted before the close
-    // event fires, res emits an error (ERR_STREAM_WRITE_AFTER_END or
-    // ERR_STREAM_DESTROYED). Without this handler, the error becomes an
-    // uncaught exception and crashes the process.
-    res.on('error', (err) => {
-      if (streamError) return;
-      streamError = true;
-      debugAPI("Response stream error:", err);
-      if (streamRequest) {
-        streamRequest.cancel();
-      }
-    });
-    
     // DATABASE CONNECTION
-    // Get connection from pool and enable streaming mode
+    // Get connection from pool and create a Readable stream via toReadableStream()
+    // This replaces manual request.stream = true + on('row'/'error'/'done') handlers
     const pool = await getConnectionPool();
-    streamRequest = pool.request();
-    streamRequest.stream = true; // Enable streaming - events emitted per row instead of loadAll
+    request = pool.request();
+    request.input("RowCount", mssql.Int, requestedRows);
     
     // LOG: Database execution
     debugAPI(
       `Executing stored procedure in streaming mode with ${requestedRows} rows`,
     );
     
-    // STORED PROCEDURE EXECUTION
-    // Execute with row count parameter
-    // In streaming mode, this emits 'row' events as data flows from MSSQL
-    streamRequest.input("RowCount", mssql.Int, requestedRows);
-    streamRequest.execute('spGenerateData').catch((err) => {
-      if (streamError) return; // Prevent double-handling
-      streamError = true;
-      debugAPI("Execute failed:", err);
-      if (res.headersSent) {
-        res.destroy(err);
-      } else {
-        const dbError = new DatabaseError('Database error occurred', err);
+    // toReadableStream() returns a Node.js Readable in object mode.
+    // Internally sets request.stream = true and wires up row/error/done events.
+    dbStream = request.toReadableStream();
+    
+    // WRITABLE STREAM: Processes each row through ExcelJS
+    // Replaces the manual request.on('row', ...) handler with a proper stream
+    const excelWriter = new Writable({
+      objectMode: true,
+      write(row, encoding, callback) {
         try {
-          res.status(dbError.status).json({
-            error: { message: dbError.message, code: dbError.code }
-          });
-        } catch (error_) {
-          debugAPI("Failed to send error response:", error_);
-        }
-      }
-      if (streamRequest) {
-        streamRequest.cancel();
-      }
-    });
-    
-    // EVENT HANDLERS (Database → Excel → HTTP)
-    // These async listeners handle the streaming data flow
-    
-    // ROW EVENT: Fired for each row returned from database
-    // This is where data flows from MSSQL → ExcelJS → HTTP response
-    streamRequest.on('row', (row) => {
-      rowCount++;
-      
-      // Map database columns to Excel row format and write immediately
-      // .commit() writes the row to the underlying stream without buffering
-      worksheet.addRow(mapRowToExcel(row)).commit();
-      
-      // BACKPRESSURE: If the response stream buffer is full, pause the
-      // database stream until the client catches up. Without this, a slow
-      // client causes unbounded memory growth as rows pile up in the buffer.
-      if (res.writableLength > res.writableHighWaterMark) {
-        streamRequest.pause();
-        res.once('drain', () => streamRequest.resume());
-      }
-      
-      // MEMORY TRACKING: Log memory usage periodically
-      // Every 5000 rows, check memory to detect potential issues
-      if (rowCount % 5000 === 0) {
-        memoryLogger(`Export - ${rowCount} rows`);
-        debugAPI(`Processed ${rowCount} rows`);
-      }
-    });
-    
-    // ERROR EVENT: Fired if database streaming fails
-    // Could indicate: connection lost, timeout, SQL error, etc.
-    streamRequest.on('error', (err) => {
-      if (streamError) return; // Prevent double-handling
-      streamError = true;
-      debugAPI("SQL stream error:", err);
-      
-      if (res.headersSent) {
-        res.destroy(err); // Abort the in-flight transfer
-      } else {
-        const dbError = new DatabaseError('Database error occurred', err);
-        try {
-          res.status(dbError.status).json({
-            error: {
-              message: dbError.message,
-              code: dbError.code
-            }
-          });
-        } catch (error_) {
-          debugAPI("Failed to send error response:", error_);
-        }
-      }
-      if (streamRequest) {
-        streamRequest.cancel();
-      }
-    });
-    
-    // DONE EVENT: Fired when all rows are sent and database stream closes
-    // This is where we finalize the Excel file
-    streamRequest.on('done', async () => {
-      try {
-        debugAPI(`SQL stream complete. Total rows: ${rowCount}`);
-        
-        // WORKBOOK FINALIZATION
-        // These calls close the Excel stream and ensure all data is flushed
-        // They must complete before we can end the HTTP response
-        await worksheet.commit();
-        await workbook.commit();
-        
-        // LOGGING & METRICS
-        const duration = Date.now() - startTime;
-        debugAPI(`Export complete: ${rowCount} rows in ${duration}ms`);
-        memoryLogger('Export - Complete'); // Final current memory snapshot
-        memoryLogger.logPeakSummary('Export - Peak'); // Peak memory during entire operation
-        
-        // Close the HTTP response (browser receives complete file)
-        res.end();
-      } catch (err) {
-        if (streamError) return; // Prevent double-handling
-        streamError = true;
-        debugAPI("Error finalizing workbook:", err);
-        if (res.headersSent) {
-          res.destroy(err); // Force-close the partially-written response
-        } else {
-          const exportError = new ExportError('Failed to generate Excel file');
-          try {
-            res.status(exportError.status).json({
-              error: {
-                message: exportError.message,
-                code: exportError.code
-              }
-            });
-          } catch (error_) {
-            debugAPI("Failed to send error response:", error_);
+          rowCount++;
+          
+          // Map database columns to Excel row format and write immediately
+          // .commit() writes the row to the underlying stream without buffering
+          worksheet.addRow(mapRowToExcel(row)).commit();
+          
+          // MEMORY TRACKING: Log memory usage periodically
+          // Every 5000 rows, check memory to detect potential issues
+          if (rowCount % 5000 === 0) {
+            memoryLogger(`Export - ${rowCount} rows`);
+            debugAPI(`Processed ${rowCount} rows`);
           }
+          
+          // BACKPRESSURE: If the response stream buffer is full, wait for
+          // drain before accepting the next row. This prevents unbounded
+          // memory growth when a slow client can't keep up.
+          if (res.writableLength > res.writableHighWaterMark) {
+            res.once('drain', callback);
+          } else {
+            callback();
+          }
+        } catch (err) {
+          callback(err);
         }
+      }
+    });
+    
+    // RESPONSE STREAM ERROR HANDLER
+    // If the client disconnects and a write is attempted before the close
+    // event fires, res emits an error (ERR_STREAM_WRITE_AFTER_END or
+    // ERR_STREAM_DESTROYED). Propagate to dbStream so pipeline handles it.
+    res.on('error', (err) => {
+      debugAPI("Response stream error:", err);
+      if (request) {
+        request.cancel();
+      }
+      if (dbStream) {
+        dbStream.destroy(err);
       }
     });
     
@@ -259,18 +177,74 @@ export const streamReportExport = async (req, res, next) => {
         debugAPI(`Client disconnected after ${rowCount} rows`);
         memoryLogger.logPeakSummary('Export - Peak (Disconnected)');
         
-        // Cancel the database request if it's still active
-        if (streamRequest) {
-          streamRequest.cancel();
+        // Cancel the database request and destroy the stream
+        if (request) {
+          request.cancel();
+        }
+        if (dbStream) {
+          dbStream.destroy();
         }
       }
     });
     
+    // STORED PROCEDURE EXECUTION
+    // Execute with row count parameter - rows flow through dbStream
+    // Catch prevents unhandled rejection; errors propagate via dbStream
+    request.execute('spGenerateData').catch((err) => {
+      debugAPI("Execute failed:", err);
+      if (dbStream) {
+        dbStream.destroy(err);
+      }
+    });
+    
+    // PIPELINE: Database → Excel → HTTP
+    // pipeline() replaces manual 'row', 'error', and 'done' event handlers.
+    // It handles error propagation and stream cleanup automatically,
+    // eliminating the need for a streamError guard flag.
+    await pipeline(dbStream, excelWriter);
+    
+    // WORKBOOK FINALIZATION
+    // Pipeline completed successfully - all rows have been processed
+    debugAPI(`SQL stream complete. Total rows: ${rowCount}`);
+    
+    // These calls close the Excel stream and ensure all data is flushed
+    // They must complete before we can end the HTTP response
+    await worksheet.commit();
+    await workbook.commit();
+    
+    // LOGGING & METRICS
+    const duration = Date.now() - startTime;
+    debugAPI(`Export complete: ${rowCount} rows in ${duration}ms`);
+    memoryLogger('Export - Complete'); // Final current memory snapshot
+    memoryLogger.logPeakSummary('Export - Peak'); // Peak memory during entire operation
+    
+    // Close the HTTP response (browser receives complete file)
+    res.end();
   } catch (err) {
-    // INITIALIZATION ERRORS
-    // Errors setting up the export (before streaming starts)
-    debugAPI("Error setting up export stream:", err);
-    next(err); // Pass to Express global error handler
+    debugAPI("Export error:", err);
+    
+    // Cancel any active database request to prevent orphaned queries
+    if (request) {
+      request.cancel();
+    }
+    
+    if (res.headersSent) {
+      // Mid-stream error: abort the in-flight transfer
+      res.destroy(err);
+    } else if (dbStream) {
+      // Database/stream error before or during streaming
+      const dbError = new DatabaseError('Database error occurred', err);
+      try {
+        res.status(dbError.status).json({
+          error: { message: dbError.message, code: dbError.code }
+        });
+      } catch (error_) {
+        debugAPI("Failed to send error response:", error_);
+      }
+    } else {
+      // Initialization error (before streaming started)
+      next(err);
+    }
   }
 };
 

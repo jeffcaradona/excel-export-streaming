@@ -1,13 +1,14 @@
 /**
  * Integration tests for exportController.js
- * Tests error handling with actual request/response flow
+ * Tests stream-based error handling with pipeline() and toReadableStream()
  * Run: node --test api/tests/controllers/exportController.integration.test.js --test-timeout=10000
  */
 
 import test from 'node:test';
 import assert from 'node:assert';
 import sinon from 'sinon';
-import { EventEmitter } from 'node:events';
+import { pipeline } from 'node:stream/promises';
+import { Writable } from 'node:stream';
 
 import ResponseMock from '../mocks/response.mock.js';
 import StreamRequestMock from '../mocks/streamRequest.mock.js';
@@ -24,49 +25,45 @@ test('Integration Tests - exportController', async (t) => {
     sandbox.restore();
   });
 
-  await t.test('Error during row streaming aborts and closes response', async () => {
-    // Scenario: 100 rows streamed, error on row 50
+  await t.test('Error during row streaming aborts pipeline and destroys response', async () => {
+    // Scenario: stream error on row 3 causes pipeline to reject
     const mockRequest = StreamRequestMock.stub();
     const res = ResponseMock.stub();
+    const dbStream = mockRequest.toReadableStream();
 
     let rowCount = 0;
-    let streamError = false;
 
-    mockRequest.on = function(event, handler) {
-      EventEmitter.prototype.on.call(this, event, handler);
-      return this;
-    };
-
-    // Setup row handler
-    mockRequest.on('row', () => {
-      rowCount++;
-      if (rowCount === 50) {
-        // Abort: emit error
-        mockRequest.emit('error', new Error('Row handler error'));
-      }
-    });
-
-    // Setup error handler (like in exportController)
-    mockRequest.on('error', (error) => {
-      if (!streamError) {
-        streamError = true;
-        if (res.headersSent) {
-          res.destroy(error);
+    const writer = new Writable({
+      objectMode: true,
+      write(row, encoding, callback) {
+        rowCount++;
+        if (rowCount === 3) {
+          callback(new Error('Row handler error'));
         } else {
-          res.status(500).json({ error: error.message });
+          callback();
         }
       }
     });
 
-    // Mark headers sent and stream 100 rows
+    // Push 5 rows and signal done
+    StreamRequestMock.emulateRows(mockRequest, [
+      { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }
+    ]);
+    StreamRequestMock.emulateDone(mockRequest);
+
     res.markHeadersSent();
-    for (let i = 1; i <= 100; i++) {
-      mockRequest.emit('row', { id: i });
-      if (streamError) break;
+
+    try {
+      await pipeline(dbStream, writer);
+      assert.fail('Pipeline should have rejected');
+    } catch (err) {
+      // Simulate controller error handling
+      if (res.headersSent) {
+        res.destroy(err);
+      }
     }
 
-    assert.strictEqual(rowCount, 50);
-    assert.strictEqual(streamError, true);
+    assert.strictEqual(rowCount, 3);
     assert.strictEqual(res.destroy.calledOnce, true);
   });
 
@@ -100,48 +97,34 @@ test('Integration Tests - exportController', async (t) => {
     assert.strictEqual(res.status.calledWith(500), true);
   });
 
-  await t.test('Race: error and done both fire, only first wins', async () => {
-    // Scenario: error on row 100, done also emitted, guard flag prevents double cleanup
+  await t.test('Pipeline rejects when dbStream is destroyed with error', async () => {
+    // Scenario: database error destroys the readable stream, pipeline catches it
     const mockRequest = StreamRequestMock.stub();
     const res = ResponseMock.stub();
+    const dbStream = mockRequest.toReadableStream();
 
-    let streamError = false;
     let cleanupCount = 0;
 
-    mockRequest.on = function(event, handler) {
-      EventEmitter.prototype.on.call(this, event, handler);
-      return this;
-    };
-
-    const errorHandler = (error) => {
-      if (!streamError) {
-        streamError = true;
-        cleanupCount++;
-        res.destroy(error);
+    const writer = new Writable({
+      objectMode: true,
+      write(row, encoding, callback) {
+        callback();
       }
-    };
+    });
 
-    const doneHandler = () => {
-      if (!streamError) {
-        streamError = true;
-        cleanupCount++;
-        res.end();
-      }
-    };
-
-    mockRequest.on('error', errorHandler);
-    mockRequest.on('done', doneHandler);
+    // Emit error on stream
+    StreamRequestMock.emulateError(mockRequest, new Error('Query error'));
 
     res.markHeadersSent();
 
-    // Emit both simultaneously (race)
-    mockRequest.emit('error', new Error('Query error'));
-    mockRequest.emit('done', 100);
+    try {
+      await pipeline(dbStream, writer);
+    } catch {
+      cleanupCount++;
+      res.destroy(new Error('Query error'));
+    }
 
-    // Wait for next tick to allow both to fire
-    await new Promise(resolve => setImmediate(resolve));
-
-    assert.strictEqual(cleanupCount, 1, 'Only one handler should execute');
+    assert.strictEqual(cleanupCount, 1, 'Pipeline should reject exactly once');
     assert.strictEqual(res.destroy.called, true);
   });
 
@@ -175,32 +158,37 @@ test('Integration Tests - exportController', async (t) => {
     assert.strictEqual(mockRequest.cancel.called, true);
   });
 
-  await t.test('Timeout error during query emits and is handled', async () => {
-    // Scenario: query takes too long, server timeout fires
+  await t.test('Timeout error during query destroys stream and is handled', async () => {
+    // Scenario: query takes too long, timeout error destroys the stream
     const mockRequest = StreamRequestMock.stub();
     const res = ResponseMock.stub();
+    const dbStream = mockRequest.toReadableStream();
 
     const timeoutError = DatabaseMock.timeoutError('30s timeout');
-    let streamError = false;
 
-    mockRequest.on = function(event, handler) {
-      EventEmitter.prototype.on.call(this, event, handler);
-      return this;
-    };
-
-    mockRequest.on('error', (error) => {
-      if (!streamError) {
-        streamError = true;
-        res.destroy(error);
+    const writer = new Writable({
+      objectMode: true,
+      write(row, encoding, callback) {
+        callback();
       }
     });
 
     res.markHeadersSent();
-    mockRequest.emit('error', timeoutError);
 
-    assert.strictEqual(streamError, true);
+    // Destroy stream with timeout error
+    StreamRequestMock.emulateError(mockRequest, timeoutError);
+
+    try {
+      await pipeline(dbStream, writer);
+      assert.fail('Pipeline should have rejected');
+    } catch (err) {
+      if (res.headersSent) {
+        res.destroy(err);
+      }
+    }
+
     assert.strictEqual(res.destroy.calledOnce, true);
-    assert.strictEqual(res.destroy.firstCall.args[0], timeoutError);
+    assert.strictEqual(res.destroy.firstCall.args[0].message, '30s timeout');
   });
 
   await t.test('Canceled query prevents orphaned database connections', async () => {
@@ -215,5 +203,29 @@ test('Integration Tests - exportController', async (t) => {
 
     assert.strictEqual(mockRequest.cancel.called, true);
     assert.strictEqual(StreamRequestMock.wasCancelled(mockRequest), true);
+  });
+
+  await t.test('Successful pipeline completes and all rows are processed', async () => {
+    // Scenario: 100 rows stream through pipeline successfully
+    const mockRequest = StreamRequestMock.stub();
+    const dbStream = mockRequest.toReadableStream();
+
+    let rowCount = 0;
+    const rows = Array.from({ length: 100 }, (_, i) => ({ id: i + 1 }));
+
+    const writer = new Writable({
+      objectMode: true,
+      write(row, encoding, callback) {
+        rowCount++;
+        callback();
+      }
+    });
+
+    StreamRequestMock.emulateRows(mockRequest, rows);
+    StreamRequestMock.emulateDone(mockRequest);
+
+    await pipeline(dbStream, writer);
+
+    assert.strictEqual(rowCount, 100);
   });
 });
