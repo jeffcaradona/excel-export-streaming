@@ -1,19 +1,18 @@
 /**
  * Unit tests for exportController.js
- * Validates error handling paths and guard flag logic
+ * Validates error handling paths, stream-based flow, and pipeline behavior
  * Run: node --test api/tests/controllers/exportController.test.js
  */
 
 import test from 'node:test';
 import assert from 'node:assert';
 import sinon from 'sinon';
-import { EventEmitter } from 'node:events';
+import { pipeline } from 'node:stream/promises';
+import { Writable } from 'node:stream';
 
 import ResponseMock from '../mocks/response.mock.js';
 import StreamRequestMock from '../mocks/streamRequest.mock.js';
 import DatabaseMock from '../mocks/database.mock.js';
-
-// Note: exportController would be required/imported to test actual implementation
 
 test('Unit Tests - exportController', async (t) => {
   let sandbox;
@@ -36,50 +35,41 @@ test('Unit Tests - exportController', async (t) => {
     assert.strictEqual(res.header.calledOnce, true);
   });
 
-  await t.test('Happy path: successful row streaming', async () => {
-    // Test that rows flow through without triggering error handlers
+  await t.test('Happy path: toReadableStream() returns a Readable', async () => {
+    // Test that the mock's toReadableStream() returns a usable Readable stream
     const mockRequest = StreamRequestMock.stub();
-    let rowCount = 0;
+    const dbStream = mockRequest.toReadableStream();
 
-    mockRequest.on = function(event, handler) {
-      EventEmitter.prototype.on.call(this, event, handler);
-      return this;
-    };
-
-    // Simulate successful row emission
-    mockRequest.on('row', () => {
-      rowCount++;
-    });
-
-    // Emit 10 rows
-    for (let i = 0; i < 10; i++) {
-      mockRequest.emit('row', { id: i, value: `row${i}` });
-    }
-
-    assert.strictEqual(rowCount, 10);
+    assert.strictEqual(mockRequest.toReadableStream.calledOnce, true);
+    assert.strictEqual(typeof dbStream.read, 'function');
+    assert.strictEqual(typeof dbStream.destroy, 'function');
+    assert.strictEqual(dbStream.readableObjectMode, true);
   });
 
-  await t.test('Guard flag prevents double-handling of error', async () => {
-    // Test that streamError flag prevents duplicate error processing
-    // when both error handler and done handler fire
-    let errorHandlerCalls = 0;
+  await t.test('Happy path: rows flow through pipeline(dbStream, writable)', async () => {
+    // Test that rows from toReadableStream() flow through a Writable via pipeline()
+    const mockRequest = StreamRequestMock.stub();
+    const dbStream = mockRequest.toReadableStream();
+    let rowCount = 0;
 
-    // Simulate guard flag behavior
-    let streamError = false;
-
-    const errorHandler = () => {
-      if (!streamError) {
-        streamError = true;
-        errorHandlerCalls++;
+    const writer = new Writable({
+      objectMode: true,
+      write(row, encoding, callback) {
+        rowCount++;
+        callback();
       }
-    };
+    });
 
-    // Fire error twice (simulating race condition)
-    errorHandler();
-    errorHandler();
+    // Push rows and signal done
+    StreamRequestMock.emulateRows(mockRequest, [
+      { id: 1, value: 'row1' },
+      { id: 2, value: 'row2' },
+      { id: 3, value: 'row3' },
+    ]);
+    StreamRequestMock.emulateDone(mockRequest);
 
-    assert.strictEqual(errorHandlerCalls, 1, 'Guard flag should prevent double-handling');
-    assert.strictEqual(streamError, true);
+    await pipeline(dbStream, writer);
+    assert.strictEqual(rowCount, 3);
   });
 
   await t.test('Promise rejection from execute() is caught', async () => {
@@ -145,18 +135,28 @@ test('Unit Tests - exportController', async (t) => {
     assert.strictEqual(mockRequest.cancel.calledOnce, true);
   });
 
-  await t.test('Done handler cleanup on successful completion', async () => {
-    // Test that resources are cleaned up after successful export
+  await t.test('Pipeline error from dbStream.destroy() propagates correctly', async () => {
+    // Test that destroying the readable stream causes pipeline to reject
     const mockRequest = StreamRequestMock.stub();
+    const dbStream = mockRequest.toReadableStream();
+    const testError = new Error('Stream destroyed');
 
-    // Simulate done handler
-    // In real code: request.on('done', () => { ... })
-
-    assert.strictEqual(mockRequest.listenerCount('done'), 0); // Before attaching
-    mockRequest.on('done', () => {
-      // Cleanup logic
+    const writer = new Writable({
+      objectMode: true,
+      write(row, encoding, callback) {
+        callback();
+      }
     });
-    assert(mockRequest.listenerCount('done') >= 0); // After attaching
+
+    // Destroy the stream with an error
+    StreamRequestMock.emulateError(mockRequest, testError);
+
+    try {
+      await pipeline(dbStream, writer);
+      assert.fail('Pipeline should have rejected');
+    } catch (err) {
+      assert.strictEqual(err.message, 'Stream destroyed');
+    }
   });
 
   await t.test('Safe try-catch around res.status().json() survives socket errors', async () => {
@@ -175,33 +175,5 @@ test('Unit Tests - exportController', async (t) => {
       // Socket error caught here - connection was closed
       // This is expected behavior, so we pass silently
     }
-  });
-
-  await t.test('Multiple error paths coordinate via guard flag', async () => {
-    // Integration: both error and done handlers race, guard flag wins
-    let cleanupCount = 0;
-    let streamError = false;
-
-    
-    const errorCleanup = () => {
-      if (!streamError) {
-        streamError = true;
-        cleanupCount++;
-      }
-    };
-
-    const doneCleanup = () => {
-      if (!streamError) {
-        streamError = true;
-        cleanupCount++;
-      }
-    };
-
-    // Both fire simultaneously (race condition)
-    errorCleanup();
-    doneCleanup();
-
-    assert.strictEqual(cleanupCount, 1, 'Only one cleanup should execute');
-    assert.strictEqual(streamError, true);
   });
 });
